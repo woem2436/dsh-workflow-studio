@@ -26,14 +26,22 @@ Coze 式的智能体工作模式里，最值钱的是**事件视图**：不是�
 
 ## 安装
 
-插件已经可以在本地目录直接装进某个 profile：
+插件可以直接从仓库装进某个 profile：
 
 ```bash
 # 1) 装进 profile（会把依赖写进 profile 的 package.json 并登记 bundle）
-dsh plugin --profile desktop add "file:D:/DSH Workplace/Pugins Invention"
+dsh plugin --profile desktop add "git+https://github.com/woem2436/dsh-workflow-studio.git"
 
 # 2) 侧栏即出现「流程工坊」（profile 会热加载；个别版本需要重启一次）
 ```
+
+改本地代码时用 `file:` 装更顺手（免发布、改页面刷新生效）：
+
+```bash
+dsh plugin --profile desktop add "file:D:/DSH Workplace/Pugins Invention"
+```
+
+> 注意 `file:` 装的是**目录引用**：目录一挪走或删掉，桌面版启动就会找不到插件。要长期用就换成 `git+` 或 npm 源。
 
 卸载：
 
