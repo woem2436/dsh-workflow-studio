@@ -156,6 +156,7 @@ try {
   let graph = null
   let taskToggle = null
   let afterToggle = null
+  let canvas = null
 
   if (flow === 'config') {
     await evaluate(`document.querySelector('#btn-data-dir')?.click(); true`)
@@ -191,6 +192,133 @@ try {
       conn: document.querySelector('#conn em')?.textContent?.trim() ?? null,
     }))()`)
     config = { opened, after }
+  } else if (flow === 'shot') {
+    await evaluate(`document.querySelector('[data-view-btn="canvas"]')?.click(); true`)
+    await sleep(700)
+    await evaluate(`document.querySelector('[data-canvas="auto"]')?.click(); true`)
+    await sleep(1600)
+    const state0 = await evaluate(`(() => ({
+      zoom: document.querySelector('#canvas-zoom')?.textContent ?? null,
+      nodes: document.querySelectorAll('.cnode').length,
+      edges: document.querySelectorAll('#canvas-edges path.edge').length,
+      world: document.querySelector('#canvas-world')?.style.width ?? null,
+    }))()`)
+
+    await fs.mkdir(path.dirname(path.resolve(outPath)), { recursive: true })
+    const cleanShot = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false })
+    await fs.writeFile(outPath, Buffer.from(cleanShot.data, 'base64'))
+
+    await evaluate(`(() => { const node = document.querySelector('.cnode'); node?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })); return Boolean(node) })()`)
+    await sleep(800)
+    const inspector = await evaluate(`(() => ({
+      open: !document.querySelector('#inspector')?.hidden,
+      title: document.querySelector('#inspector h3')?.textContent ?? null,
+      sections: [...document.querySelectorAll('#inspector .ins-section > h4')].map((node) => node.textContent),
+      childButtons: [...document.querySelectorAll('#inspector .child-box button')].map((node) => node.textContent?.trim()),
+      txaCount: document.querySelectorAll('#inspector .txa').length,
+    }))()`)
+    canvas = { state0, inspector, cleanShot: path.resolve(outPath) }
+  } else if (flow === 'canvas') {
+    await evaluate(`document.querySelector('[data-view-btn="canvas"]')?.click(); true`)
+    await sleep(900)
+    if (process.argv.includes('--layout')) {
+      await evaluate(`document.querySelector('[data-canvas="auto"]')?.click(); true`)
+      await sleep(1400)
+    }
+    if (process.argv.includes('--zoom100')) {
+      await evaluate(`document.querySelector('[data-canvas="zoom"]')?.click(); true`)
+      await sleep(300)
+    }
+
+    const readNode = `(() => {
+      const node = document.querySelector('.cnode')
+      const box = node?.getBoundingClientRect() ?? null
+      return {
+        visible: !document.querySelector('#canvas-view')?.hidden,
+        nodes: document.querySelectorAll('.cnode').length,
+        edges: document.querySelectorAll('#canvas-edges path.edge').length,
+        zoom: document.querySelector('#canvas-zoom')?.textContent ?? null,
+        crumbs: document.querySelectorAll('#wf-crumbs button').length,
+        signatureShown: document.querySelector('#wf-signature')?.hidden === false,
+        firstId: node?.dataset.id ?? null,
+        firstLeft: node?.style.left ?? null,
+        firstTop: node?.style.top ?? null,
+        box: box ? { x: box.left, y: box.top, w: box.width, h: box.height } : null,
+      }
+    })()`
+
+    const before = await evaluate(readNode)
+    const startX = Math.round((before.box?.x ?? 0) + (before.box?.w ?? 0) - 26)
+    const startY = Math.round((before.box?.y ?? 0) + 22)
+    await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: startX, y: startY, button: 'left', clickCount: 1 })
+    for (let step = 1; step <= 6; step += 1) {
+      await send('Input.dispatchMouseEvent', {
+        type: 'mouseMoved',
+        x: startX + step * 20,
+        y: startY + step * 13,
+        button: 'left',
+        buttons: 1,
+      })
+      await sleep(30)
+    }
+    await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: startX + 120, y: startY + 78, button: 'left', clickCount: 1 })
+    await sleep(1200)
+
+    const afterDrag = await evaluate(readNode)
+    const persisted = await fetch(new URL('/workflow-studio/api/workflows', url).toString())
+      .then((response) => response.json())
+      .then((list) => (list.workflows?.length ? list.workflows[0].id : null))
+      .catch(() => null)
+    const stored = persisted
+      ? await fetch(new URL(`/workflow-studio/api/workflows/${persisted}`, url).toString())
+          .then((response) => response.json())
+          .then((view) => {
+            const event = view.workflow?.events?.find((item) => item.id === before.firstId)
+            return event ? { id: event.id, position: event.position } : null
+          })
+          .catch(() => null)
+      : null
+
+    // 展开子矩阵：点第一个「展开」按钮
+    const expand = await evaluate(`(() => {
+      const button = [...document.querySelectorAll('.cnode-open')].find((item) => !item.classList.contains('is-child'))
+      if (!button) return { created: false }
+      button.click()
+      return { created: true }
+    })()`)
+    await sleep(1800)
+
+    const afterExpand = await evaluate(`(() => ({
+      wfName: document.querySelector('#wf-name')?.textContent?.trim() ?? null,
+      crumbs: document.querySelectorAll('#wf-crumbs button').length,
+      crumbText: document.querySelector('#wf-crumbs')?.textContent?.trim() ?? null,
+      nodes: document.querySelectorAll('.cnode').length,
+      cards: document.querySelectorAll('.ev-card').length,
+      toast: document.querySelector('#toast')?.textContent?.trim() ?? null,
+      canvasVisible: !document.querySelector('#canvas-view')?.hidden,
+    }))()`)
+
+    // 点面包屑回到父矩阵
+    await evaluate(`document.querySelector('#wf-crumbs button')?.click(); true`)
+    await sleep(1400)
+    const afterBack = await evaluate(`(() => ({
+      wfName: document.querySelector('#wf-name')?.textContent?.trim() ?? null,
+      nodes: document.querySelectorAll('.cnode').length,
+      childBadges: document.querySelectorAll('.cnode-child-badge').length,
+      crumbs: document.querySelectorAll('#wf-crumbs button').length,
+    }))()`)
+
+    const frame = await evaluate(`(() => {
+      const viewport = document.querySelector('#canvas-viewport')?.getBoundingClientRect()
+      const world = document.querySelector('#canvas-world')
+      return {
+        viewport: viewport ? { w: Math.round(viewport.width), h: Math.round(viewport.height), x: Math.round(viewport.x), y: Math.round(viewport.y) } : null,
+        world: world ? { w: world.style.width, h: world.style.height, transform: world.style.transform } : null,
+        zoomLabel: document.querySelector('#canvas-zoom')?.textContent ?? null,
+      }
+    })()`)
+
+    canvas = { before, afterDrag, stored, expand, afterExpand, afterBack, frame }
   } else {
     // 交互 1：点开第一张卡片，看详情面板
     await evaluate(`document.querySelector('.ev-card')?.click(); true`)
@@ -229,9 +357,10 @@ try {
     }))()`)
   }
 
+  const shotPath = flow === 'shot' ? outPath.replace(/\.png$/i, '-inspector.png') : outPath
   const shot = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false })
-  await fs.mkdir(path.dirname(path.resolve(outPath)), { recursive: true })
-  await fs.writeFile(outPath, Buffer.from(shot.data, 'base64'))
+  await fs.mkdir(path.dirname(path.resolve(shotPath)), { recursive: true })
+  await fs.writeFile(shotPath, Buffer.from(shot.data, 'base64'))
 
   const html = htmlSelector
     ? await evaluate(`document.querySelector(${JSON.stringify(htmlSelector)})?.outerHTML ?? '(未找到元素)'`)
@@ -239,7 +368,7 @@ try {
 
   console.log(
     JSON.stringify(
-      { url, flow, report, afterCardClick, graph, taskToggle, afterToggle, config, consoleErrors, html, screenshot: path.resolve(outPath) },
+      { url, flow, report, afterCardClick, graph, taskToggle, afterToggle, config, canvas, consoleErrors, html, screenshot: path.resolve(outPath) },
       null,
       2,
     ),

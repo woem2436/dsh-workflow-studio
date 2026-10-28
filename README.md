@@ -4,10 +4,14 @@
 
 ![流程工坊看板](docs/preview.png)
 
+也可以把事件摆成**自由拖拽的矩阵画布**：每一格是一个矩阵，格子里写任务、技能、输出格式和建议，连线就是依赖，子矩阵再往下钻一层。
+
+![流程工坊画布](docs/preview-canvas.png)
+
 这是 DeepSeek Harness 的一个插件：它同时给 **agent** 和 **人** 提供工作入口。
 
-- **agent 侧**：一个 `workflow` 工具。模型把项目拆成事件、勾掉待办、查询「现在能做什么」，读回来的是一张排版好的文字看板。
-- **人侧**：一个可视化编辑页。左侧流程列表、中间泳道看板（拖拽换道 / 改顺序）、右侧事件详情、依赖图切换、SSE 实时同步。
+- **agent 侧**：一个 `workflow` 工具。模型把项目拆成事件、勾掉待办、查询「现在能做什么」，读回来的是一张排版好的文字看板；要派活时用 `prompt` 拿一张单节点的「派工单」。
+- **人侧**：一个可视化编辑页。左侧流程列表、中间「看板 / 画布 / 总览」三视图、右侧事件详情、SSE 实时同步。
 - **同一份数据**：宿主端一个 JSON 库，两边共用；一边改，另一边立刻看到。
 
 ## 为什么这样设计
@@ -19,10 +23,13 @@ Coze 式的智能体工作模式里，最值钱的是**事件视图**：不是�
 | 层 | 是什么 | 例子 |
 | --- | --- | --- |
 | 泳道（layer） | 服务职能分层，固定 6 条 | 决策编排 / 产品定义 / 方案设计 / 工程实现 / 质量验证 / 交付发布 |
-| 事件（event） | 一个可交付的小事件，属于某条泳道 | 「拆解可交付单元」 |
+| 矩阵 / 事件（event） | 一个可交付的小事件，属于某条泳道；画布上是一个可拖拽的格子 | 「拆解可交付单元」 |
 | 待办（task） | 事件内部的执行清单 | 「为每个单元写验收口径」 |
+| 子矩阵（child） | 把一个事件展开成独立流程，内部再分工 | 「支付模块」里的接口设计 / 联调 / 回归 |
 
-事件之间的 `dependsOn` 决定先后：依赖没做完就是 `blocked`，做完了自动变 `ready`；事件内待办全部勾上，自动进 `review`。这样「下一步做什么」是**算出来的**，不是猜出来的。
+每个事件还能配 **技能**、**输出格式**、**给执行者的建议**，以及画布上的自由坐标；流程本身有 **函数签名**（inputs / outputs），所以「工作流即函数」：客户给输入，流水线跑完交出可验收的输出。子矩阵通过 `parentId` / `parentNodeId` 挂回父节点，面包屑可以逐层钻回去。
+
+事件之间的 `dependsOn` 决定先后：依赖没做完就是 `blocked`，做完了自动变 `ready`；事件内待办全部勾上，自动进 `review`。这样「下一步做什么」是**算出来的**，不是猜出来的。画布上的连线就是这份依赖关系，拖动格子只改坐标，不改依赖。
 
 ## 安装
 
@@ -78,23 +85,40 @@ workflow(action="relocate", dataDir="E:/workflow-data")
 
 - 顶部「＋ 新建流程」→ 选模板（空看板 / 项目分工 8 事件骨架）。
 - 卡片拖到别的泳道即换职能层，拖到同泳道不同位置即改顺序。
-- 点卡片打开右侧详情：改标题、状态、职能、角色、依赖、待办、验收、备注。
+- 点卡片打开右侧详情：改标题、状态、职能、角色、依赖、待办、验收、备注，以及这一格的**技能 / 输出格式 / 建议**。
 - 卡片上直接勾掉当前待办；全部勾完，状态自动进「待验收」。
 - 「依赖图」标签页按依赖深度自动排版，一眼看清主链和分支。
 - 看板左上角「实时」表示 SSE 已连上：agent 在对话里改数据，页面会自己刷新。
 
+### 人在画布上
+
+- 切到「画布」：每个事件是一张可拖动的矩阵卡片，卡片右侧拉出贝塞尔连线指向依赖它的格子。
+- 空白处按住拖 = 平移，滚轮 = 缩放，「适应」一键让整张图落在视野里，「自动排版」按依赖深度排成蛇形两行（长链也不会缩成一条细线）。
+- 卡片右下角「⊞ 展开」把这一格变成子矩阵（独立的空白流程）并直接钻进去，面包屑「父流程 / 子矩阵」可逐层返回；已经展开的显示「进入子矩阵」。
+- 双击卡片开右侧详情，在「矩阵配置」里填技能、输出格式、建议；在「子矩阵」里展开或进入。
+
 ### agent 在心里有一张图
 
-工具名 `workflow`，一个工具 14 个 action。典型用法：
+工具名 `workflow`，一个工具 16 个 action。典型用法：
 
 ```text
 workflow(action="create", name="发版 v0.1", template="project")     # 先拿骨架
 workflow(action="list")                                            # 有哪些流程
 workflow(action="next")                                            # 现在能做哪些
 workflow(action="add_event", title="写迁移脚本", layer="build",
-         dependsOn=["定技术路线与接口"], tasks=["写 SQL", "在影子库跑通"])
+         dependsOn=["定技术路线与接口"], tasks=["写 SQL", "在影子库跑通"],
+         skills=["数据库迁移"], outputFormat="migrations/*.sql + 回滚脚本")
 workflow(action="set_task", event="写迁移脚本", task="写 SQL", done=true)
 workflow(action="update_event", event="写迁移脚本", status="review")
+workflow(action="child", event="支付模块", name="支付模块 · 实现")   # 展开子矩阵
+workflow(action="prompt", event="写迁移脚本")                       # 拿这张派工单去干活
+```
+
+`prompt` 返回的是一张可以直接喂给 subagent 的单节点契约：角色、需要的技能、待办、输出格式、上游产出、下游消费者、验收口径。`inputs` / `outputs` 用 `"名称|类型|说明"` 写函数签名：
+
+```text
+workflow(action="create", name="周报流水线",
+         inputs=["素材|text|本周的提交与讨论"], outputs=["周报|file|Markdown 文件"])
 ```
 
 返回的是文字看板，所以模型不需要额外解释就能接着做下一步：
@@ -125,6 +149,9 @@ workflow(action="update_event", event="写迁移脚本", status="review")
 | PATCH | `/workflow-studio/api/workflows/:id/events/:eventId` | 改事件 |
 | DELETE | `/workflow-studio/api/workflows/:id/events/:eventId` | 删事件 |
 | POST | `/workflow-studio/api/workflows/:id/events/:eventId/move` | 换道 / 改顺序 |
+| POST | `/workflow-studio/api/workflows/:id/events/:eventId/position` | 挪画布坐标 `{x, y}` |
+| POST | `/workflow-studio/api/workflows/:id/events/:eventId/child` | 展开子矩阵 `{name, goal, description, template}` |
+| POST | `/workflow-studio/api/workflows/:id/layout` | 批量排版 `{positions: [{id, position}]}` |
 | POST | `/workflow-studio/api/workflows/:id/tasks` | 加待办 |
 | PATCH | `/workflow-studio/api/workflows/:id/tasks/:taskId` | 勾选 / 改写 |
 | DELETE | `/workflow-studio/api/workflows/:id/tasks/:taskId` | 删待办 |
@@ -141,10 +168,12 @@ workflow(action="update_event", event="写迁移脚本", status="review")
 node dev/harness.js                        # 本地起编辑页：http://127.0.0.1:4317/workflow-studio/（页面显示目录被固定）
 node dev/harness.js --unlocked --data-dir .dev-data   # 解锁模式，可在页面上换目录
 node dev/dom-check.js <url> --out shot.png # 无头 Chrome 跑一遍页面并截图（含交互断言）
+node dev/dom-check.js <url> --flow canvas --out shot.png   # 画布：拖拽落库、展开子矩阵、面包屑回退
+node dev/dom-check.js <url> --flow shot --out docs/preview-canvas.png  # 只拍一张干净的画布图 + 校验详情面板
 node dev/dom-check.js <url> --flow config --target D:/tmp/x   # 走一遍「换数据目录」
 node dev/dsh-app-check.js --url "<dsh web 打印的带 token 地址>"   # 在真实 DSH 实例里验证侧栏与面板
 node dev/dsh-app-check.js --url "<…>" --seed                     # 顺手造一张演示看板再截图
-node --test tests/store.test.js tests/api.test.js tests/config.test.js   # 37 个用例
+node --test tests/store.test.js tests/api.test.js tests/config.test.js tests/canvas.test.js   # 49 个用例
 ```
 
 - 页面是**原生 ESM，零依赖零构建**：`web/index.html` + `web/styles.css` + `web/app.js`。
@@ -156,20 +185,23 @@ node --test tests/store.test.js tests/api.test.js tests/config.test.js   # 37 �
 ```text
 index.js          host 半入口：注册 workflow 工具 + 挂 /workflow-studio 路由
 client.js         浏览器半：侧栏入口 + main 面板（iframe 薄壳）
-lib/store.js      流程/事件/待办数据层，状态推导与原子写盘
+lib/store.js      流程/事件/待办/子矩阵数据层，状态推导与原子写盘
 lib/config.js     数据目录：优先级解析、路径校验、指针文件
-lib/api.js        HTTP 表面：JSON API、SSE、静态页、/api/config
-lib/tool.js       agent 工具 definition
+lib/api.js        HTTP 表面：JSON API、SSE、静态页、/api/config、/position、/layout、/child
+lib/tool.js       agent 工具 definition（含 child / prompt 派工单）
 lib/render.js     agent 读的文字看板
 web/              编辑页（原生 ESM）
 dev/              本地 harness、CDP 检查脚本
+docs/             截图（preview.png 看板 / preview-canvas.png 画布 / preview-in-dsh.png 集成）
 tests/            node:test 用例
 ```
 
 ## 限制
 
 - 事件之间的「先后」只表达为 `dependsOn` 有向无环图；成环会被拒绝，但**不排期**（没有日期/工时）。
-- 暂不自动拉起 subagent：v1 只做就绪度推导与状态推进，保持确定性。
+- 画布只做「自由摆放 + 依赖连线」：连线由依赖算出来，不能直接拉一条线新增依赖（在详情面板里选）。
+- 子矩阵是独立流程，删父矩阵会级联删掉它的子矩阵；不支持把矩阵移动挂到别的父节点下（只能展开/删除）。
+- 暂不自动拉起 subagent：v1 只做就绪度推导与状态推进，`prompt` 只产出派工单，执行仍由 agent 决定。
 - 一个实例一份数据目录；多实例共享同一个 `DSH_HOME` 时请显式设置 `dataDir`。
 
 ## License

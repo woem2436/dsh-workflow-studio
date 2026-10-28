@@ -25,7 +25,8 @@
         <div class="topbar-mid">
           <div class="segmented" role="tablist" aria-label="视图">
             <button type="button" data-view-btn="board" class="is-on" role="tab" aria-selected="true">看板</button>
-            <button type="button" data-view-btn="graph" role="tab" aria-selected="false">依赖图</button>
+            <button type="button" data-view-btn="canvas" role="tab" aria-selected="false">画布</button>
+            <button type="button" data-view-btn="graph" role="tab" aria-selected="false">总览</button>
           </div>
         </div>
 
@@ -61,11 +62,13 @@
         <main class="canvas">
           <div class="canvas-head">
             <div class="wf-identity">
+              <div id="wf-crumbs" class="crumbs" hidden></div>
               <div class="wf-name-row">
                 <h2 id="wf-name">未选择流程</h2>
                 <span id="wf-status" class="pill pill-idle">—</span>
               </div>
               <p id="wf-goal" class="wf-goal">从左侧选择一个流程，或者新建一个。</p>
+              <div id="wf-signature" class="signature" hidden></div>
             </div>
             <div class="wf-progress">
               <div class="progress-track"><div id="wf-progress-bar" class="progress-fill"></div></div>
@@ -86,7 +89,42 @@
           <section id="next-strip" class="next-strip" aria-label="下一步"></section>
 
           <section id="board" class="board" aria-label="事件看板"></section>
-          <section id="graph" class="graph" aria-label="依赖图" hidden>
+
+          <section id="canvas-view" class="canvas-view" aria-label="矩阵画布" hidden>
+            <div id="canvas-viewport" class="canvas-viewport">
+              <div id="canvas-world" class="canvas-world">
+                <svg id="canvas-edges" class="canvas-edges" aria-hidden="true">
+                  <defs>
+                    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+                      <path d="M0 0 L8 3 L0 6 z" class="arrow-head" />
+                    </marker>
+                    <marker id="arrow-done" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+                      <path d="M0 0 L8 3 L0 6 z" class="arrow-head is-done" />
+                    </marker>
+                  </defs>
+                </svg>
+                <div id="canvas-nodes" class="canvas-nodes"></div>
+              </div>
+            </div>
+            <div class="canvas-tools" aria-label="画布工具">
+              <button type="button" data-canvas="zoom-out" title="缩小">−</button>
+              <button type="button" data-canvas="zoom" id="canvas-zoom" class="zoom-label" title="重置为 100%">100%</button>
+              <button type="button" data-canvas="zoom-in" title="放大">＋</button>
+              <span class="tool-sep"></span>
+              <button type="button" data-canvas="fit" title="适应窗口">适应</button>
+              <button type="button" data-canvas="auto" title="按依赖重新排版">自动排版</button>
+            </div>
+            <div class="graph-legend">
+              <span><i class="dot dot-ready"></i>可开始</span>
+              <span><i class="dot dot-doing"></i>进行中</span>
+              <span><i class="dot dot-review"></i>待验收</span>
+              <span><i class="dot dot-done"></i>已完成</span>
+              <span><i class="dot dot-blocked"></i>被阻塞</span>
+              <span class="legend-hint">拖动矩阵 · 双击编辑 · 空格拖动画布</span>
+            </div>
+          </section>
+
+          <section id="graph" class="graph" aria-label="依赖总览" hidden>
             <div id="graph-canvas" class="graph-canvas"></div>
             <div class="graph-legend">
               <span><i class="dot dot-ready"></i>可开始</span>

@@ -25,6 +25,9 @@ const state = {
   template: 'project',
   drag: null,
   reloadTimer: null,
+  canvas: { zoom: 1, panX: 24, panY: 18 },
+  nodeDrag: null,
+  pan: null,
 }
 
 const $ = (selector, root = document) => root.querySelector(selector)
@@ -123,6 +126,11 @@ const api = {
   setTask: (id, eid, tid, body) =>
     request(`api/workflows/${id}/events/${eid}/tasks/${tid}`, { method: 'PATCH', body: JSON.stringify(body) }),
   removeTask: (id, eid, tid) => request(`api/workflows/${id}/events/${eid}/tasks/${tid}`, { method: 'DELETE' }),
+  position: (id, eid, position) =>
+    request(`api/workflows/${id}/events/${eid}/position`, { method: 'POST', body: JSON.stringify({ position }) }),
+  layout: (id, positions) => request(`api/workflows/${id}/layout`, { method: 'POST', body: JSON.stringify({ positions }) }),
+  child: (id, eid, body) =>
+    request(`api/workflows/${id}/events/${eid}/child`, { method: 'POST', body: JSON.stringify(body ?? {}) }),
   config: () => request('api/config'),
   relocate: (body) => request('api/config', { method: 'POST', body: JSON.stringify(body) }),
 }
@@ -226,6 +234,8 @@ function renderHead() {
   $('#btn-add-event').disabled = !has
   $('#btn-edit-workflow').disabled = !has
   $('#empty').hidden = has || state.list.length > 0
+  renderCrumbs(workflow)
+  renderSignature(workflow)
 
   if (!has) {
     $('#wf-name').textContent = '未选择流程'
@@ -603,6 +613,384 @@ function renderGraph() {
   }
 }
 
+/* ── 渲染：面包屑 / 函数签名 / 矩阵画布 ─────────────── */
+
+const NODE_W = 236
+const NODE_H = 106
+
+/** Events always carry coordinates after normalisation; this keeps old data safe. */
+function posOf(event) {
+  return event?.position ?? { x: 0, y: 0 }
+}
+
+function svgEl(tag, attrs = {}) {
+  const node = document.createElementNS('http://www.w3.org/2000/svg', tag)
+  for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, String(value))
+  return node
+}
+
+/** Walk `parentId` upward using the list summaries; guards against stale pointers. */
+function parentChain(workflow) {
+  const chain = []
+  let current = workflow
+  for (let guard = 0; guard < 12 && current?.parentId; guard += 1) {
+    const parent = state.list.find((item) => item.id === current.parentId)
+    if (!parent) break
+    chain.unshift({ id: parent.id, name: parent.name })
+    current = parent
+  }
+  return chain
+}
+
+function renderCrumbs(workflow) {
+  const box = $('#wf-crumbs')
+  if (!box) return
+  const chain = workflow ? parentChain(workflow) : []
+  box.replaceChildren()
+  box.hidden = chain.length === 0
+  if (!chain.length) return
+  chain.forEach((item, index) => {
+    if (index > 0) box.append(h('span', { class: 'crumb-sep', text: '/' }))
+    box.append(h('button', { type: 'button', text: item.name, title: `返回 ${item.name}`, onclick: () => selectWorkflow(item.id) }))
+  })
+  box.append(h('span', { class: 'crumb-sep', text: '/' }))
+  box.append(h('span', { class: 'crumb-now', text: workflow.name }))
+}
+
+function renderSignature(workflow) {
+  const box = $('#wf-signature')
+  if (!box) return
+  const inputs = workflow?.signature?.inputs ?? []
+  const outputs = workflow?.signature?.outputs ?? []
+  box.replaceChildren()
+  box.hidden = inputs.length === 0 && outputs.length === 0
+  if (box.hidden) return
+  const chip = (port, kind) =>
+    h(
+      'span',
+      { class: 'sig-chip', title: port.description || `${kind === 'in' ? '入参' : '出参'} ${port.name}` },
+      h('b', { text: port.name }),
+      h('i', { text: `${port.type}${port.required === false ? '?' : ''}` }),
+    )
+  box.append(h('span', { text: '函数' }))
+  for (const port of inputs) box.append(chip(port, 'in'))
+  box.append(h('span', { class: 'sig-arrow', text: '→' }))
+  for (const port of outputs) box.append(chip(port, 'out'))
+}
+
+function applyCanvasTransform() {
+  const world = $('#canvas-world')
+  if (!world) return
+  const { zoom, panX, panY } = state.canvas
+  world.style.transform = `translate(${Math.round(panX)}px, ${Math.round(panY)}px) scale(${zoom})`
+  const label = $('#canvas-zoom')
+  if (label) label.textContent = `${Math.round(zoom * 100)}%`
+}
+
+function edgePath(source, target, satisfied) {
+  const from = posOf(source)
+  const to = posOf(target)
+  const x1 = from.x + NODE_W
+  const y1 = from.y + NODE_H / 2
+  const x2 = to.x
+  const y2 = to.y + NODE_H / 2
+  const bend = Math.max(46, Math.abs(x2 - x1) / 2)
+  return svgEl('path', {
+    class: `edge${satisfied ? ' is-satisfied' : ''}`,
+    d: `M ${x1} ${y1} C ${x1 + bend} ${y1}, ${x2 - bend} ${y2}, ${x2} ${y2}`,
+    'marker-end': `url(#${satisfied ? 'arrow-done' : 'arrow'})`,
+  })
+}
+
+function drawEdges() {
+  const workflow = currentWorkflow()
+  const layer = $('#canvas-edges')
+  if (!layer) return
+  layer.querySelectorAll('path.edge').forEach((path) => path.remove())
+  if (!workflow) return
+  const byId = new Map(workflow.events.map((event) => [event.id, event]))
+  for (const event of workflow.events) {
+    for (const depId of event.dependsOn) {
+      const source = byId.get(depId)
+      if (source) layer.append(edgePath(source, event, source.status === 'done' || source.status === 'skipped'))
+    }
+  }
+}
+
+function canvasNode(workflow, event) {
+  const tasks = event.tasks ?? []
+  const done = tasks.filter((task) => task.done).length
+  const layer = layerOf(workflow, event.layerId)
+  const at = posOf(event)
+  const node = h(
+    'div',
+    {
+      class: `cnode s-${event.status}${state.selectedEventId === event.id ? ' is-selected' : ''}`,
+      dataset: { id: event.id },
+      style: { left: `${at.x}px`, top: `${at.y}px` },
+      title: event.description || event.title,
+    },
+    event.childId ? h('span', { class: 'cnode-child-badge', text: '⊞', title: '包含子矩阵' }) : null,
+    h(
+      'div',
+      { class: 'cnode-top' },
+      h('i', { class: `dot dot-${event.status}` }),
+      h('span', { class: 'cnode-title', text: event.title }),
+    ),
+    h(
+      'div',
+      { class: 'cnode-sub' },
+      h('span', { text: STATUS_LABEL[event.status] ?? event.status }),
+      layer ? h('span', { text: `· ${layer.name}` }) : null,
+      event.role ? h('span', { text: `· ${event.role}` }) : null,
+    ),
+    (event.skills ?? []).length
+      ? h('div', { class: 'cnode-tags' }, (event.skills ?? []).slice(0, 3).map((skill) => h('span', { class: 'tag', text: skill })))
+      : null,
+    h(
+      'div',
+      { class: 'cnode-foot' },
+      h('span', { class: 'cnode-progress', text: tasks.length ? `待办 ${done}/${tasks.length}` : '未拆待办' }),
+      event.dependsOn.length ? h('span', { class: 'cnode-dep', text: `↳ ${event.dependsOn.length}` }) : null,
+      h('button', {
+        type: 'button',
+        class: `cnode-open${event.childId ? ' is-child' : ''}`,
+        text: event.childId ? '进入子矩阵' : '⊞ 展开',
+        onclick: (clickEvent) => {
+          clickEvent.stopPropagation()
+          onNodeAction(event)
+        },
+      }),
+    ),
+  )
+  node.addEventListener('pointerdown', (pointerEvent) => startNodeDrag(pointerEvent, event, node))
+  node.addEventListener('dblclick', () => openInspector(event.id))
+  return node
+}
+
+function renderCanvas() {
+  const workflow = currentWorkflow()
+  const world = $('#canvas-world')
+  const nodes = $('#canvas-nodes')
+  if (!world || !nodes) return
+  nodes.replaceChildren()
+  if (!workflow) {
+    drawEdges()
+    return
+  }
+  const events = workflow.events
+  const width = Math.max(1000, ...events.map((event) => posOf(event).x + NODE_W + 200))
+  const height = Math.max(700, ...events.map((event) => posOf(event).y + NODE_H + 180))
+  world.style.width = `${width}px`
+  world.style.height = `${height}px`
+  const layer = $('#canvas-edges')
+  if (layer) {
+    layer.setAttribute('width', width)
+    layer.setAttribute('height', height)
+    layer.setAttribute('viewBox', `0 0 ${width} ${height}`)
+  }
+  applyCanvasTransform()
+  drawEdges()
+  for (const event of events) nodes.append(canvasNode(workflow, event))
+}
+
+function onNodeAction(event) {
+  if (event.childId) {
+    selectWorkflow(event.childId)
+    return
+  }
+  const workflow = currentWorkflow()
+  if (!workflow) return
+  run(() => api.child(workflow.id, event.id, { name: `${event.title} · 子矩阵` }), { toast: '已生成子矩阵' }).then(async (result) => {
+    if (!result?.child) return
+    applyList(await api.list())
+    renderRail()
+    await selectWorkflow(result.child.id)
+    setMode('canvas')
+  })
+}
+
+function startNodeDrag(pointerEvent, event, node) {
+  if (pointerEvent.button !== 0) return
+  if (pointerEvent.target.closest('.cnode-open')) return
+  pointerEvent.stopPropagation()
+  const startX = pointerEvent.clientX
+  const startY = pointerEvent.clientY
+  const origin = { ...posOf(event) }
+  const workflow = currentWorkflow()
+  const model = workflow?.events.find((item) => item.id === event.id)
+  let moved = false
+  node.classList.add('is-dragging')
+
+  const onMove = (moveEvent) => {
+    const dx = (moveEvent.clientX - startX) / state.canvas.zoom
+    const dy = (moveEvent.clientY - startY) / state.canvas.zoom
+    if (!moved && Math.abs(dx) < 3 && Math.abs(dy) < 3) return
+    moved = true
+    const position = { x: Math.round(origin.x + dx), y: Math.round(origin.y + dy) }
+    node.style.left = `${position.x}px`
+    node.style.top = `${position.y}px`
+    if (model) model.position = position
+    drawEdges()
+  }
+
+  const onUp = async () => {
+    window.removeEventListener('pointermove', onMove)
+    node.classList.remove('is-dragging')
+    if (!moved || !model || !workflow) return
+    const position = { x: model.position.x, y: model.position.y }
+    await run(() => api.position(workflow.id, event.id, position), { silent: true })
+  }
+
+  window.addEventListener('pointermove', onMove)
+  window.addEventListener('pointerup', onUp, { once: true })
+}
+
+function zoomAt(clientX, clientY, factor) {
+  const viewport = $('#canvas-viewport')
+  if (!viewport) return
+  const rect = viewport.getBoundingClientRect()
+  const before = state.canvas.zoom
+  const after = Math.min(2, Math.max(0.35, before * factor))
+  if (after === before) return
+  const px = clientX - rect.left
+  const py = clientY - rect.top
+  state.canvas.panX = px - ((px - state.canvas.panX) / before) * after
+  state.canvas.panY = py - ((py - state.canvas.panY) / before) * after
+  state.canvas.zoom = after
+  applyCanvasTransform()
+}
+
+function zoomAtCenter(factor) {
+  const viewport = $('#canvas-viewport')
+  if (!viewport) return
+  const rect = viewport.getBoundingClientRect()
+  zoomAt(rect.left + rect.width / 2, rect.top + rect.height / 2, factor)
+}
+
+function fitCanvas() {
+  const workflow = currentWorkflow()
+  const viewport = $('#canvas-viewport')
+  if (!workflow || !viewport || !workflow.events.length) return
+  const rect = viewport.getBoundingClientRect()
+  if (rect.width < 40 || rect.height < 40) return
+  const minX = Math.min(...workflow.events.map((event) => posOf(event).x))
+  const minY = Math.min(...workflow.events.map((event) => posOf(event).y))
+  const maxX = Math.max(...workflow.events.map((event) => posOf(event).x + NODE_W))
+  const maxY = Math.max(...workflow.events.map((event) => posOf(event).y + NODE_H))
+  const pad = 28
+  const spanX = Math.max(1, maxX - minX)
+  const spanY = Math.max(1, maxY - minY)
+  const scale = Math.max(0.3, Math.min(1, (rect.width - pad * 2) / spanX, (rect.height - pad * 2) / spanY))
+  state.canvas.zoom = scale
+  state.canvas.panX = (rect.width - spanX * scale) / 2 - minX * scale
+  state.canvas.panY = (rect.height - spanY * scale) / 2 - minY * scale
+  applyCanvasTransform()
+}
+
+/** Predictable starting view: the canvas opens at a readable zoom, not a computed guess. */
+function resetCanvasView() {
+  state.canvas.zoom = 0.9
+  state.canvas.panX = 24
+  state.canvas.panY = 16
+  applyCanvasTransform()
+}
+
+async function autoLayout() {
+  const workflow = currentWorkflow()
+  if (!workflow) return
+  const byId = new Map(workflow.events.map((event) => [event.id, event]))
+  const depth = new Map()
+  const visit = (event, guard = 0) => {
+    if (depth.has(event.id)) return depth.get(event.id)
+    if (guard > 24) return 0
+    const parents = event.dependsOn.map((id) => byId.get(id)).filter(Boolean)
+    const value = parents.length ? Math.max(...parents.map((parent) => visit(parent, guard + 1))) + 1 : 0
+    depth.set(event.id, value)
+    return value
+  }
+  for (const event of workflow.events) visit(event)
+
+  const columns = new Map()
+  for (const event of workflow.events) {
+    const column = depth.get(event.id) ?? 0
+    if (!columns.has(column)) columns.set(column, [])
+    columns.get(column).push(event)
+  }
+  const laneOrder = new Map(workflow.layers.map((layer, index) => [layer.id, index]))
+  const positions = []
+  // A long linear chain would stretch into one thin row; wrapping every four
+  // columns into a snake keeps the whole pipeline readable at one zoom level.
+  const perBand = 4
+  const ordered = [...columns.entries()].sort((a, b) => a[0] - b[0])
+  for (const [column, list] of ordered) {
+    list.sort((a, b) => (laneOrder.get(a.layerId) ?? 0) - (laneOrder.get(b.layerId) ?? 0))
+    const band = Math.floor(column / perBand)
+    const slot = band % 2 === 0 ? column % perBand : perBand - 1 - (column % perBand)
+    list.forEach((event, index) => {
+      positions.push({
+        id: event.id,
+        position: { x: 48 + slot * 300, y: 48 + band * 420 + index * 136 },
+      })
+    })
+  }
+  const result = await run(() => api.layout(workflow.id, positions), { toast: '已按依赖重新排版' })
+  if (result) {
+    setTimeout(fitCanvas, 40)
+    setTimeout(fitCanvas, 220)
+  }
+}
+
+function onCanvasTool(tool) {
+  if (tool === 'zoom-in') zoomAtCenter(1.2)
+  else if (tool === 'zoom-out') zoomAtCenter(1 / 1.2)
+  else if (tool === 'zoom') {
+    state.canvas.zoom = 1
+    applyCanvasTransform()
+  } else if (tool === 'fit') fitCanvas()
+  else if (tool === 'auto') autoLayout()
+}
+
+function bindCanvas() {
+  const viewport = $('#canvas-viewport')
+  if (!viewport) return
+  viewport.addEventListener('pointerdown', (pointerEvent) => {
+    if (pointerEvent.button !== 0) return
+    if (pointerEvent.target.closest('.cnode')) return
+    state.pan = {
+      startX: pointerEvent.clientX,
+      startY: pointerEvent.clientY,
+      panX: state.canvas.panX,
+      panY: state.canvas.panY,
+    }
+    viewport.classList.add('is-panning')
+  })
+  viewport.addEventListener('pointermove', (pointerEvent) => {
+    if (!state.pan) return
+    state.canvas.panX = state.pan.panX + (pointerEvent.clientX - state.pan.startX)
+    state.canvas.panY = state.pan.panY + (pointerEvent.clientY - state.pan.startY)
+    applyCanvasTransform()
+  })
+  const stopPan = () => {
+    state.pan = null
+    viewport.classList.remove('is-panning')
+  }
+  viewport.addEventListener('pointerup', stopPan)
+  viewport.addEventListener('pointerleave', stopPan)
+  viewport.addEventListener('pointercancel', stopPan)
+  viewport.addEventListener(
+    'wheel',
+    (wheelEvent) => {
+      wheelEvent.preventDefault()
+      zoomAt(wheelEvent.clientX, wheelEvent.clientY, wheelEvent.deltaY < 0 ? 1.1 : 1 / 1.1)
+    },
+    { passive: false },
+  )
+  for (const button of $$('[data-canvas]')) {
+    button.addEventListener('click', () => onCanvasTool(button.dataset.canvas))
+  }
+}
+
 /* ── 渲染：事件详情 ─────────────────────────────────── */
 
 function selectedEvent() {
@@ -769,6 +1157,58 @@ function renderInspector() {
     onchange: (change) => patchEvent({ notes: change.currentTarget.value }, '备注已保存'),
   })
 
+  const skillsArea = h('textarea', {
+    class: 'txa',
+    rows: '2',
+    placeholder: '每行一个技能，例如：需求分析',
+    value: (event.skills ?? []).join('\n'),
+    onchange: (change) =>
+      patchEvent(
+        {
+          skills: change.currentTarget.value
+            .split('\n')
+            .map((line) => line.trim())
+            .filter(Boolean),
+        },
+        '技能已保存',
+      ),
+  })
+
+  const outputArea = h('textarea', {
+    class: 'txa',
+    rows: '3',
+    placeholder: '输出格式：文件路径、模板、字段要求…',
+    value: event.outputFormat ?? '',
+    onchange: (change) => patchEvent({ outputFormat: change.currentTarget.value }, '输出格式已保存'),
+  })
+
+  const suggestionArea = h('textarea', {
+    class: 'txa',
+    rows: '3',
+    placeholder: '给执行者的建议：怎么做、注意什么、参考哪个先例',
+    value: event.suggestion ?? '',
+    onchange: (change) => patchEvent({ suggestion: change.currentTarget.value }, '建议已保存'),
+  })
+
+  const childSection = h(
+    'div',
+    { class: 'ins-section' },
+    h('h4', { text: '子矩阵' }),
+    event.childId
+      ? h(
+          'div',
+          { class: 'child-box' },
+          h('p', { class: 'kv', text: '这一格已经展开成独立子流程，有自己的分工与依赖。' }),
+          h('button', { type: 'button', class: 'btn', text: '进入子矩阵 →', onclick: () => selectWorkflow(event.childId) }),
+        )
+      : h(
+          'div',
+          { class: 'child-box' },
+          h('p', { class: 'kv', text: '把这一格展开成子流程：里面的分工、依赖、产出单独编排。' }),
+          h('button', { type: 'button', class: 'btn', text: '⊞ 展开成子矩阵', onclick: () => onNodeAction(event) }),
+        ),
+  )
+
   panel.replaceChildren(
     h(
       'div',
@@ -811,6 +1251,18 @@ function renderInspector() {
       h(
         'div',
         { class: 'ins-section' },
+        h('h4', { text: '矩阵配置' }),
+        h('label', { class: 'ins-label', text: '需要的技能（每行一个）' }),
+        skillsArea,
+        h('label', { class: 'ins-label', text: '输出格式' }),
+        outputArea,
+        h('label', { class: 'ins-label', text: '给执行者的建议' }),
+        suggestionArea,
+      ),
+      childSection,
+      h(
+        'div',
+        { class: 'ins-section' },
         h('h4', { text: '操作' }),
         h(
           'div',
@@ -850,6 +1302,7 @@ async function selectWorkflow(id) {
   try {
     const view = await api.get(id)
     applyView(view)
+    if (state.mode === 'canvas') setTimeout(resetCanvasView, 30)
   } catch (error) {
     showToast(error.message, true)
     await refreshList()
@@ -1303,8 +1756,10 @@ function renderAll() {
   renderNext()
   renderBoard()
   renderGraph()
+  renderCanvas()
   renderInspector()
   $('#board').hidden = state.mode !== 'board' || !currentWorkflow()
+  $('#canvas-view').hidden = state.mode !== 'canvas' || !currentWorkflow()
   $('#graph').hidden = state.mode !== 'graph' || !currentWorkflow()
   $('#next-strip').hidden = !currentWorkflow()
   $('#empty').hidden = Boolean(currentWorkflow()) || state.list.length > 0
@@ -1319,6 +1774,11 @@ function setMode(mode) {
   })
   renderBoard()
   renderGraph()
+  renderCanvas()
+  $('#board').hidden = mode !== 'board' || !currentWorkflow()
+  $('#canvas-view').hidden = mode !== 'canvas' || !currentWorkflow()
+  $('#graph').hidden = mode !== 'graph' || !currentWorkflow()
+  if (mode === 'canvas') setTimeout(resetCanvasView, 20)
 }
 
 /* ── 事件绑定 ───────────────────────────────────────── */
@@ -1341,6 +1801,8 @@ function bindEvents() {
   $$('[data-view-btn]').forEach((button) => {
     button.addEventListener('click', () => setMode(button.dataset.viewBtn))
   })
+
+  bindCanvas()
 
   $$('[data-close]').forEach((button) => {
     button.addEventListener('click', () => button.closest('dialog')?.close())

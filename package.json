@@ -1,7 +1,7 @@
 {
   "name": "dsh-workflow-studio",
-  "version": "0.2.0",
-  "description": "流程工坊 · Workflow Studio — a visual, ordered event-flow editor for DSH: split a project into ordered small events, layered by service function, and drive them from both the agent and the page.",
+  "version": "0.3.0",
+  "description": "流程工坊 · Workflow Studio — a free-form canvas of matrices for DSH: drag events into a pipeline, nest sub-matrices, give each one tasks, skills and output format, and drive it from both the agent and the page.",
   "type": "module",
   "repository": {
     "type": "git",
@@ -62,7 +62,7 @@
   },
   "scripts": {
     "dev": "node dev/harness.js",
-    "test": "node --test tests/store.test.js tests/api.test.js"
+    "test": "node --test tests/store.test.js tests/api.test.js tests/config.test.js tests/canvas.test.js"
   },
   "license": "MIT"
 }
