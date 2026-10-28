@@ -112,6 +112,7 @@ try {
   await send('Page.enable')
   await send('Runtime.enable')
   await send('Log.enable')
+  await send('Network.enable')
   await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 920, deviceScaleFactor: 1, mobile: false })
 
   await send('Page.navigate', { url })
@@ -167,6 +168,36 @@ try {
     }
   })()`)
 
+  const config = await evaluate(`(async () => {
+    const frame = document.querySelector('iframe[src*="workflow-studio"]')
+    if (!frame) return { ok: false, reason: 'no iframe' }
+    const doc = frame.contentDocument
+    const dataDir = doc?.querySelector('#data-dir')?.textContent?.trim() ?? null
+    const button = doc?.querySelector('#btn-data-dir')
+    let response = null
+    try {
+      const res = await frame.contentWindow.fetch('/workflow-studio/api/config')
+      response = { status: res.status, body: await res.json() }
+    } catch (error) {
+      response = { error: String(error && error.message ? error.message : error) }
+    }
+    if (button) button.click()
+    await new Promise((resolve) => setTimeout(resolve, 400))
+    const dialog = {
+      open: doc?.querySelector('#dialog-data-dir')?.open ?? null,
+      note: doc?.querySelector('#data-dir-note')?.textContent?.trim() ?? null,
+      inputDisabled: doc?.querySelector('#data-dir-input')?.disabled ?? null,
+      applyHidden: doc?.querySelector('#btn-data-dir-apply')?.hidden ?? null,
+    }
+    doc?.querySelector('#dialog-data-dir')?.close()
+    return { ok: true, dataDir, buttonTitle: button?.title ?? null, dialog, response }
+  })()`)
+  await sleep(300)
+
+  const badResponses = events
+    .filter((event) => event.method === 'Network.responseReceived' && (event.params?.response?.status ?? 0) >= 400)
+    .map((event) => ({ status: event.params.response.status, url: event.params.response.url }))
+
   const consoleErrors = events
     .filter((event) => event.method === 'Runtime.exceptionThrown' || (event.method === 'Log.entryAdded' && event.params?.entry?.level === 'error'))
     .map((event) => event.params?.exceptionDetails?.text ?? event.params?.entry?.text)
@@ -175,7 +206,7 @@ try {
   await fs.mkdir(path.dirname(path.resolve(outPath)), { recursive: true })
   await fs.writeFile(outPath, Buffer.from(shot.data, 'base64'))
 
-  console.log(JSON.stringify({ boot, clicked, panel, consoleErrors, screenshot: path.resolve(outPath) }, null, 2))
+  console.log(JSON.stringify({ boot, clicked, panel, config, badResponses, consoleErrors, screenshot: path.resolve(outPath) }, null, 2))
 } finally {
   try {
     socket?.close()

@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict'
 import http from 'node:http'
+import path from 'node:path'
 import test from 'node:test'
 
-import { makeServer } from './helpers.js'
+import { readSettings } from '../lib/config.js'
+import { isolateSettings, makeServer, tempDir } from './helpers.js'
 
 test('meta describes the plugin surface', async () => {
   const server = await makeServer()
@@ -197,5 +199,104 @@ test('the SSE channel opens with a hello frame and reports changes', async () =>
   } finally {
     request?.destroy()
     await server.close()
+  }
+})
+
+test('the config endpoint reports where boards live', async () => {
+  const server = await makeServer()
+  try {
+    const { status, body } = await server.json('/api/config')
+    assert.equal(status, 200)
+    assert.equal(body.dataDir, server.store.dir)
+    assert.equal(body.locked, null)
+    assert.ok(Array.isArray(body.drives))
+  } finally {
+    await server.close()
+  }
+})
+
+test('a pinned data folder refuses to move', async () => {
+  const target = await tempDir('workflow-studio-target-')
+  const pinned = await tempDir('workflow-studio-pinned-')
+  const server = await makeServer({ pluginDataDir: pinned.dir })
+  const before = server.store.dir
+  try {
+    const view = await server.json('/api/config')
+    assert.equal(view.body.locked, 'config')
+    assert.equal(view.body.source, 'config')
+
+    const { status, body } = await server.json('/api/config', {
+      method: 'POST',
+      body: JSON.stringify({ dataDir: target.dir }),
+    })
+    assert.equal(status, 409)
+    assert.equal(body.error.code, 'data_dir_locked')
+    assert.equal(server.store.dir, before)
+  } finally {
+    await server.close()
+    await target.cleanup()
+    await pinned.cleanup()
+  }
+})
+
+test('choosing a folder persists the pointer and moves the boards', async () => {
+  const settings = isolateSettings()
+  const target = await tempDir('workflow-studio-target-')
+  const server = await makeServer()
+  try {
+    await server.json('/api/workflows', {
+      method: 'POST',
+      body: JSON.stringify({ name: '搬家测试', template: 'project' }),
+    })
+
+    const moved = await server.json('/api/config', {
+      method: 'POST',
+      body: JSON.stringify({ dataDir: target.dir, migrate: true }),
+    })
+    assert.equal(moved.status, 200)
+    assert.equal(moved.body.dataDir, path.resolve(target.dir))
+    assert.equal(moved.body.migrated, 1)
+    assert.equal(moved.body.locked, null)
+    assert.equal(server.store.dir, path.resolve(target.dir))
+
+    const listed = await server.json('/api/workflows')
+    assert.equal(listed.body.workflows.length, 1)
+    const saved = await readSettings()
+    assert.equal(saved.dataDir, path.resolve(target.dir))
+
+    const reset = await server.json('/api/config', {
+      method: 'POST',
+      body: JSON.stringify({ reset: true, migrate: false }),
+    })
+    assert.equal(reset.status, 200)
+    assert.equal(reset.body.reset, true)
+    assert.equal((await readSettings()).dataDir, null)
+  } finally {
+    await server.close()
+    await settings.cleanup()
+    await target.cleanup()
+  }
+})
+
+test('bad data folders are rejected with a readable message', async () => {
+  const settings = isolateSettings()
+  const server = await makeServer()
+  try {
+    const relative = await server.json('/api/config', {
+      method: 'POST',
+      body: JSON.stringify({ dataDir: 'relative/folder' }),
+    })
+    assert.equal(relative.status, 400)
+    assert.equal(relative.body.error.code, 'invalid_data_dir')
+
+    const empty = await server.json('/api/config', {
+      method: 'POST',
+      body: JSON.stringify({}),
+    })
+    assert.equal(empty.status, 400)
+    assert.equal(empty.body.error.code, 'missing_data_dir')
+  } finally {
+    await server.close()
+    await settings.cleanup()
   }
 })

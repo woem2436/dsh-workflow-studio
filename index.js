@@ -11,14 +11,19 @@
  *
  * Configuration (optional, via the `config:` block of the plugin row):
  *   basePath  string  URL prefix, default `/workflow-studio`
- *   dataDir   string  where boards are stored, default `~/.dsh/workflow-studio`
+ *   dataDir   string  where boards are stored; setting it locks the page picker
+ *
+ * Where the data lives, highest precedence first: this `dataDir`, then the env
+ * var `DSH_WORKFLOW_STUDIO_DIR`, then the folder the user picked in the page
+ * (remembered in settings.json), then `~/.dsh/workflow-studio`.
  */
 
 import { readFileSync } from 'node:fs'
 
-import { WorkflowStore, defaultDataDir } from './lib/store.js'
+import { WorkflowStore } from './lib/store.js'
 import { createWebHandler } from './lib/api.js'
 import { createWorkflowTool } from './lib/tool.js'
+import { resolveDataDir } from './lib/config.js'
 
 const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'))
 
@@ -34,8 +39,10 @@ function normalizeBase(value) {
 
 export function apply(ctx, config = {}) {
   const base = normalizeBase(config.basePath)
+  const pluginDataDir = config.dataDir ? String(config.dataDir) : undefined
+  const place = resolveDataDir({ pluginDataDir })
   const store = new WorkflowStore({
-    dir: config.dataDir ?? defaultDataDir(),
+    dir: place.dataDir,
     logger: typeof ctx.logger?.warn === 'function' ? ctx.logger : undefined,
   })
 
@@ -45,11 +52,17 @@ export function apply(ctx, config = {}) {
     ctx.logger?.warn?.(`[workflow-studio] 初始化数据目录失败: ${error?.message ?? error}`)
   })
 
-  ctx.tools.register(createWorkflowTool({ store }))
+  ctx.tools.register(createWorkflowTool({ store, pluginDataDir }))
 
   ctx.inject(['webServer'], (webCtx) => {
-    const handler = createWebHandler({ store, base, plugin: { name: pkg.name, version: pkg.version } })
+    const handler = createWebHandler({
+      store,
+      base,
+      plugin: { name: pkg.name, version: pkg.version },
+      pluginDataDir,
+    })
     webCtx.effect(() => webCtx.webServer.register({ kind: 'prefix', path: base, handler }), 'workflow-studio/http')
-    ctx.logger?.info?.(`[workflow-studio] 编辑器页面 ${base}/ · 数据目录 ${store.dir}`)
+    const lock = place.locked ? `（被${place.locked === 'env' ? '环境变量' : '插件配置'}锁定，页面里不能改）` : ''
+    ctx.logger?.info?.(`[workflow-studio] 编辑器页面 ${base}/ · 数据目录 ${store.dir}${lock}`)
   })
 }

@@ -35,13 +35,15 @@ dsh plugin --profile desktop add "git+https://github.com/woem2436/dsh-workflow-s
 # 2) 侧栏即出现「流程工坊」（profile 会热加载；个别版本需要重启一次）
 ```
 
-改本地代码时用 `file:` 装更顺手（免发布、改页面刷新生效）：
+改本地代码时用 `file:` 装更顺手（免发布）：
 
 ```bash
 dsh plugin --profile desktop add "file:D:/DSH Workplace/Pugins Invention"
 ```
 
-> 注意 `file:` 装的是**目录引用**：目录一挪走或删掉，桌面版启动就会找不到插件。要长期用就换成 `git+` 或 npm 源。
+> 两个坑：
+> 1. `file:` 装的是**目录引用**，桌面版启动时按这个路径找插件；目录挪走或删掉，插件就加载不出来。要长期用就换成 `git+` 或 npm 源。
+> 2. pnpm 对 `file:` 依赖是**硬链接复制**，改完源码必须重装一次才会生效（`remove` 再 `add`），宿主半（`index.js`/`lib/`）还要重启 DSH；只有页面文件刷新就能看新内容是因为它走硬链接同一份 inode —— 编辑后刷新页面即可，不用重装。
 
 卸载：
 
@@ -49,7 +51,26 @@ dsh plugin --profile desktop add "file:D:/DSH Workplace/Pugins Invention"
 dsh plugin --profile desktop remove dsh-workflow-studio
 ```
 
-> 插件数据默认放在 `~/.dsh/workflow-studio`（设了 `DSH_HOME` 时是 `$DSH_HOME/workflow-studio`），可用环境变量 `DSH_WORKFLOW_STUDIO_DIR` 或插件配置 `dataDir` 覆盖。数据是普通 JSON 文件，备份/迁移直接拷目录。
+## 数据目录
+
+流程是普通 JSON 文件，存在哪个目录由下面四个来源**依次决定**（前面的赢）：
+
+| 优先级 | 来源 | 说明 |
+| --- | --- | --- |
+| 1 | 插件配置 `dataDir` | `cordis.patch.yml` 里给 `workflow-studio` 行加 `config: { dataDir: "D:/..." }`；命中即锁定，页面上改不了 |
+| 2 | 环境变量 `DSH_WORKFLOW_STUDIO_DIR` | 启动 DSH 前设置；同样锁定页面选择 |
+| 3 | 页面里选的路径 | 记在 `%APPDATA%\dsh-workflow-studio\settings.json`（只存指针，几 KB） |
+| 4 | 默认位置 | `$DSH_HOME/workflow-studio`，没设 `DSH_HOME` 时是 `~/.dsh/workflow-studio` |
+
+在编辑页左下角点「更改」，选盘符、填绝对路径，勾「把现有流程复制过去」就会把当前所有流程搬到新目录并从新目录继续读写；「恢复默认」把指针清空、回到默认位置。
+
+agent 也能搬：
+
+```text
+workflow(action="relocate", dataDir="E:/workflow-data")
+```
+
+备份/迁移就是拷目录；多实例共用同一个 `DSH_HOME` 时，各自设 `dataDir` 即可互不干扰。
 
 ## 用起来
 
@@ -64,7 +85,7 @@ dsh plugin --profile desktop remove dsh-workflow-studio
 
 ### agent 在心里有一张图
 
-工具名 `workflow`，一个工具 13 个 action。典型用法：
+工具名 `workflow`，一个工具 14 个 action。典型用法：
 
 ```text
 workflow(action="create", name="发版 v0.1", template="project")     # 先拿骨架
@@ -108,6 +129,8 @@ workflow(action="update_event", event="写迁移脚本", status="review")
 | PATCH | `/workflow-studio/api/workflows/:id/tasks/:taskId` | 勾选 / 改写 |
 | DELETE | `/workflow-studio/api/workflows/:id/tasks/:taskId` | 删待办 |
 | GET | `/workflow-studio/api/workflows/:id/next` | 就绪事件 + 阻塞原因 |
+| GET | `/workflow-studio/api/config` | 当前数据目录、来源（config/env/settings/默认）、是否锁定、可用盘符 |
+| POST | `/workflow-studio/api/config` | 切目录 `{dataDir, migrate}`；`{reset: true}` 回默认；锁定时 409 |
 | GET | `/workflow-studio/api/stream` | SSE：`hello` / `changed` |
 
 `:id` 可以传流程 id，也可以传名称（唯一匹配）。错误统一 `{ "error": { "code", "message", "status" } }`。
@@ -115,15 +138,17 @@ workflow(action="update_event", event="写迁移脚本", status="review")
 ## 开发
 
 ```bash
-node dev/harness.js                        # 本地起编辑页：http://127.0.0.1:4317/workflow-studio/
+node dev/harness.js                        # 本地起编辑页：http://127.0.0.1:4317/workflow-studio/（页面显示目录被固定）
+node dev/harness.js --unlocked --data-dir .dev-data   # 解锁模式，可在页面上换目录
 node dev/dom-check.js <url> --out shot.png # 无头 Chrome 跑一遍页面并截图（含交互断言）
+node dev/dom-check.js <url> --flow config --target D:/tmp/x   # 走一遍「换数据目录」
 node dev/dsh-app-check.js --url "<dsh web 打印的带 token 地址>"   # 在真实 DSH 实例里验证侧栏与面板
-node --test tests/store.test.js tests/api.test.js                # 18 个用例
+node --test tests/store.test.js tests/api.test.js tests/config.test.js   # 37 个用例
 ```
 
 - 页面是**原生 ESM，零依赖零构建**：`web/index.html` + `web/styles.css` + `web/app.js`。
 - 浏览器半 `client.js` 是手写的 ModuleLoader 包：注册侧栏入口 + `main` keyed 面板，面板里 iframe 指向宿主自己服务的编辑页。改页面不需要重装插件。
-- 宿主半：`index.js`（注册工具 + 挂 HTTP 路由）、`lib/store.js`（数据与状态推导）、`lib/api.js`（路由/静态/SSE）、`lib/tool.js`（agent 工具）、`lib/render.js`（文字看板）。
+- 宿主半：`index.js`（注册工具 + 挂 HTTP 路由）、`lib/store.js`（数据与状态推导）、`lib/config.js`（数据目录解析与指针文件）、`lib/api.js`（路由/静态/SSE）、`lib/tool.js`（agent 工具）、`lib/render.js`（文字看板）。
 
 目录：
 
@@ -131,7 +156,8 @@ node --test tests/store.test.js tests/api.test.js                # 18 个用例
 index.js          host 半入口：注册 workflow 工具 + 挂 /workflow-studio 路由
 client.js         浏览器半：侧栏入口 + main 面板（iframe 薄壳）
 lib/store.js      流程/事件/待办数据层，状态推导与原子写盘
-lib/api.js        HTTP 表面：JSON API、SSE、静态页
+lib/config.js     数据目录：优先级解析、路径校验、指针文件
+lib/api.js        HTTP 表面：JSON API、SSE、静态页、/api/config
 lib/tool.js       agent 工具 definition
 lib/render.js     agent 读的文字看板
 web/              编辑页（原生 ESM）

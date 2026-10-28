@@ -16,6 +16,7 @@ const NEXT_LABEL = { ready: '开始', doing: '送审', review: '通过', done: '
 
 const state = {
   meta: null,
+  config: null,
   list: [],
   view: null,
   selectedId: null,
@@ -122,6 +123,8 @@ const api = {
   setTask: (id, eid, tid, body) =>
     request(`api/workflows/${id}/events/${eid}/tasks/${tid}`, { method: 'PATCH', body: JSON.stringify(body) }),
   removeTask: (id, eid, tid) => request(`api/workflows/${id}/events/${eid}/tasks/${tid}`, { method: 'DELETE' }),
+  config: () => request('api/config'),
+  relocate: (body) => request('api/config', { method: 'POST', body: JSON.stringify(body) }),
 }
 
 /* ── 状态同步 ───────────────────────────────────────── */
@@ -1106,6 +1109,113 @@ async function submitEventDialog(event) {
   })
 }
 
+/* ── 数据目录 ───────────────────────────────────────── */
+
+function dataDirInfo() {
+  return (
+    state.config ?? {
+      dataDir: state.meta?.dataDir ?? '',
+      locked: null,
+      defaultDir: '',
+      drives: [],
+      settingsFile: '',
+    }
+  )
+}
+
+function renderDataDir() {
+  const info = dataDirInfo()
+  const code = $('#data-dir')
+  code.textContent = info.dataDir || '—'
+  code.title = info.dataDir || ''
+  const button = $('#btn-data-dir')
+  button.title =
+    info.locked === 'env'
+      ? '被环境变量 DSH_WORKFLOW_STUDIO_DIR 固定'
+      : info.locked === 'config'
+        ? '被插件配置 dataDir 固定'
+        : '更换数据目录'
+}
+
+async function openDataDirDialog() {
+  try {
+    state.config = await api.config()
+  } catch (error) {
+    showToast(error.message, true)
+    return
+  }
+  renderDataDir()
+  const info = dataDirInfo()
+  const dialog = $('#dialog-data-dir')
+  const input = $('#data-dir-input')
+  input.value = info.dataDir
+  $('#data-dir-migrate').checked = true
+
+  const note = $('#data-dir-note')
+  const locked = Boolean(info.locked)
+  if (locked) {
+    note.textContent =
+      info.locked === 'env'
+        ? '当前目录被环境变量 DSH_WORKFLOW_STUDIO_DIR 固定，改环境变量后才能在这里换。'
+        : '当前目录被插件配置里的 dataDir 固定，改配置后才能在这里换。'
+  } else {
+    note.textContent = `流程以 JSON 文件存在这个目录下。默认位置是 ${info.defaultDir}；换目录后新写入都走新位置。`
+  }
+  input.disabled = locked
+  $('#data-dir-options').hidden = locked
+  $('#btn-data-dir-apply').hidden = locked
+  $('#btn-data-dir-reset').hidden = locked
+
+  const row = $('#drive-row')
+  row.replaceChildren()
+  for (const drive of info.drives ?? []) {
+    row.append(
+      h(
+        'button',
+        {
+          type: 'button',
+          class: 'chip-btn',
+          onclick: () => {
+            input.value = drive
+            input.focus()
+          },
+        },
+        drive,
+      ),
+    )
+  }
+
+  dialog.showModal()
+  if (!locked) {
+    input.focus()
+    input.select()
+  }
+}
+
+async function applyDataDir(body, toast) {
+  const result = await run(() => api.relocate(body), {})
+  if (!result) return
+  state.config = result
+  if (state.meta) state.meta.dataDir = result.dataDir
+  renderDataDir()
+  $('#dialog-data-dir').close()
+  showToast(
+    result.migrated ? `${toast}，搬过去 ${result.migrated} 个流程` : toast,
+  )
+  await refreshAll()
+}
+
+async function submitDataDirDialog(event) {
+  event.preventDefault()
+  const value = $('#data-dir-input').value.trim()
+  const migrate = $('#data-dir-migrate').checked
+  if (!value) {
+    showToast('请填写绝对路径', true)
+    return
+  }
+  await applyDataDir({ dataDir: value, migrate }, `数据目录已切到 ${value}`)
+}
+
 /* ── 实时通道 ───────────────────────────────────────── */
 
 function setConn(stateName) {
@@ -1148,6 +1258,19 @@ function connectStream() {
 }
 
 function onRemoteChange(payload) {
+  if (payload?.action === 'relocated') {
+    // Someone moved the whole library: re-read everything, including where it lives now.
+    api
+      .config()
+      .then((info) => {
+        state.config = info
+        if (state.meta) state.meta.dataDir = info.dataDir
+        renderDataDir()
+      })
+      .catch(() => {})
+    refreshAll()
+    return
+  }
   if (!payload?.workflowId) return
   const item = state.list.find((entry) => entry.id === payload.workflowId)
 
@@ -1208,6 +1331,12 @@ function bindEvents() {
   $('#btn-add-event').addEventListener('click', openEventDialog)
   $('#form-workflow').addEventListener('submit', submitWorkflowDialog)
   $('#form-event').addEventListener('submit', submitEventDialog)
+  $('#btn-data-dir').addEventListener('click', openDataDirDialog)
+  $('#form-data-dir').addEventListener('submit', submitDataDirDialog)
+  $('#btn-data-dir-reset').addEventListener('click', () => {
+    const migrate = $('#data-dir-migrate').checked
+    applyDataDir({ reset: true, migrate }, '已恢复默认数据目录')
+  })
 
   $$('[data-view-btn]').forEach((button) => {
     button.addEventListener('click', () => setMode(button.dataset.viewBtn))
@@ -1246,6 +1375,13 @@ async function boot() {
 
   $('#meta-version').textContent = `v${state.meta.version} · schema ${state.meta.schemaVersion}`
   $('#data-dir').textContent = state.meta.dataDir
+
+  try {
+    state.config = await api.config()
+  } catch {
+    state.config = null
+  }
+  renderDataDir()
 
   try {
     applyList(await api.list())

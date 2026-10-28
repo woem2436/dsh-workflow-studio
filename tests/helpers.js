@@ -18,11 +18,37 @@ export async function tempDir(prefix = 'workflow-studio-') {
   }
 }
 
-export async function makeServer({ base = '/workflow-studio' } = {}) {
+/**
+ * Tests must never read or write the real `%APPDATA%` settings file, so each
+ * suite points the settings lookup at a throwaway path.
+ */
+export function isolateSettings() {
+  const file = path.join(
+    os.tmpdir(),
+    `workflow-studio-settings-${process.pid}-${Math.random().toString(36).slice(2, 8)}.json`,
+  )
+  const previous = process.env.DSH_WORKFLOW_STUDIO_SETTINGS
+  process.env.DSH_WORKFLOW_STUDIO_SETTINGS = file
+  return {
+    file,
+    async cleanup() {
+      if (previous === undefined) delete process.env.DSH_WORKFLOW_STUDIO_SETTINGS
+      else process.env.DSH_WORKFLOW_STUDIO_SETTINGS = previous
+      await fs.rm(file, { force: true })
+    },
+  }
+}
+
+export async function makeServer({ base = '/workflow-studio', pluginDataDir } = {}) {
   const temp = await tempDir()
   const store = new WorkflowStore({ dir: temp.dir })
   await store.ready()
-  const handler = createWebHandler({ store, base, plugin: { name: 'dsh-workflow-studio', version: 'test' } })
+  const handler = createWebHandler({
+    store,
+    base,
+    plugin: { name: 'dsh-workflow-studio', version: 'test' },
+    pluginDataDir,
+  })
 
   const server = http.createServer((req, res) => {
     Promise.resolve(handler(req, res)).catch((error) => {

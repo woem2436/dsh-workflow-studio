@@ -50,7 +50,10 @@
           </div>
           <ul id="wf-list" class="wf-list"></ul>
           <div class="rail-foot">
-            <span class="foot-label">数据目录</span>
+            <div class="foot-row">
+              <span class="foot-label">数据目录</span>
+              <button id="btn-data-dir" type="button" class="link-btn" title="更换数据目录">更改</button>
+            </div>
             <code id="data-dir">—</code>
           </div>
         </aside>
@@ -177,6 +180,33 @@
         <footer>
           <button type="button" class="btn ghost" data-close>取消</button>
           <button type="submit" class="btn primary">保存</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <dialog id="dialog-data-dir" class="dialog dialog-narrow">
+      <form method="dialog" class="dialog-form" id="form-data-dir">
+        <header>
+          <h3>数据目录</h3>
+          <button type="button" class="icon-btn" data-close aria-label="关闭">✕</button>
+        </header>
+        <p class="dialog-note" id="data-dir-note">流程会以 JSON 文件存在这个目录下，换目录后新写入都到新位置。</p>
+        <label class="field">
+          <span>绝对路径</span>
+          <input name="dataDir" id="data-dir-input" required spellcheck="false" autocomplete="off" placeholder="D:\DSH Workplace\workflow-studio" />
+        </label>
+        <div id="data-dir-options">
+          <div class="drive-row" id="drive-row"></div>
+          <label class="check">
+            <input type="checkbox" name="migrate" id="data-dir-migrate" checked />
+            <span>把现有流程复制过去</span>
+          </label>
+        </div>
+        <footer>
+          <button type="button" class="btn ghost" id="btn-data-dir-reset">恢复默认</button>
+          <span class="foot-spacer"></span>
+          <button type="button" class="btn ghost" data-close>取消</button>
+          <button type="submit" class="btn primary" id="btn-data-dir-apply">切换</button>
         </footer>
       </form>
     </dialog>

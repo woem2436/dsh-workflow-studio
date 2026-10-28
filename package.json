@@ -1,6 +1,6 @@
 {
   "name": "dsh-workflow-studio",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "流程工坊 · Workflow Studio — a visual, ordered event-flow editor for DSH: split a project into ordered small events, layered by service function, and drive them from both the agent and the page.",
   "type": "module",
   "repository": {

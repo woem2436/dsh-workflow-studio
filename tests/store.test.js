@@ -189,3 +189,78 @@ test('deleting an event clears dependencies that pointed at it', async () => {
     assert.equal(shape.status, 'ready')
   })
 })
+
+test('relocating copies every workflow to the new folder', async () => {
+  const target = await tempDir('workflow-studio-moved-')
+  try {
+    await withStore(async (store, temp) => {
+      const a = await store.create({ name: '搬家 A', template: 'project' })
+      const b = await store.create({ name: '搬家 B' })
+
+      const result = await store.relocate(target.dir)
+      assert.equal(result.migrated, 2)
+      assert.equal(result.adopted, 0)
+      assert.equal(store.dir, path.resolve(target.dir))
+
+      const names = store.list().map((item) => item.name).sort()
+      assert.deepEqual(names, ['搬家 A', '搬家 B'])
+      assert.equal(store.get(a.id).events.length, 8)
+      assert.ok(store.get(b.id))
+      assert.ok((await fs.readdir(path.join(target.dir, 'workflows'))).length >= 2)
+
+      // Reload from the new folder: nothing depends on the in-memory cache.
+      const reopened = new WorkflowStore({ dir: target.dir })
+      await reopened.ready()
+      assert.equal(reopened.list().length, 2)
+
+      // The old folder is left untouched, so a move can be undone by hand.
+      assert.ok((await fs.readdir(path.join(temp.dir, 'workflows'))).length >= 2)
+    })
+  } finally {
+    await target.cleanup()
+  }
+})
+
+test('relocating without migrating starts from an empty folder', async () => {
+  const target = await tempDir('workflow-studio-moved-')
+  try {
+    await withStore(async (store) => {
+      await store.create({ name: '不搬' })
+      const result = await store.relocate(target.dir, { migrate: false })
+      assert.equal(result.migrated, 0)
+      assert.equal(store.list().length, 0)
+    })
+  } finally {
+    await target.cleanup()
+  }
+})
+
+test('relocating adopts workflows that already live in the target folder', async () => {
+  const target = await tempDir('workflow-studio-moved-')
+  try {
+    const seeded = new WorkflowStore({ dir: target.dir })
+    await seeded.ready()
+    const kept = await seeded.create({ name: '本来就在' })
+
+    await withStore(async (store) => {
+      await store.create({ name: '搬过来' })
+      const result = await store.relocate(target.dir)
+      assert.equal(result.adopted, 1)
+      const names = store.list().map((item) => item.name).sort()
+      assert.deepEqual(names, ['本来就在', '搬过来'].sort())
+      assert.ok(store.get(kept.id))
+    })
+  } finally {
+    await target.cleanup()
+  }
+})
+
+test('relocating back to the same folder is a no-op', async () => {
+  await withStore(async (store, temp) => {
+    await store.create({ name: '原地' })
+    const result = await store.relocate(temp.dir)
+    assert.equal(result.migrated, 0)
+    assert.equal(result.previous, path.resolve(temp.dir))
+    assert.equal(store.list().length, 1)
+  })
+})

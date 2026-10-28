@@ -1,5 +1,8 @@
 /* 开发用：用无头 Chrome 走一遍真实页面，抓截图 + 控制台错误 + 交互断言。
-   用法：node dev/dom-check.js [url] [--out .scratch/shot.png]
+   用法：
+     node dev/dom-check.js [url] [--out .scratch/shot.png] [--html <selector>]
+     node dev/dom-check.js <unlocked-harness-url> --flow config --target "D:\\boards" [--out ...]
+   --flow config 会打开「数据目录」弹窗、填目标路径、提交并回读结果。
    不依赖任何 npm 包：Chrome 的 CDP 用内置 WebSocket 直连。 */
 
 import { spawn } from 'node:child_process'
@@ -21,6 +24,10 @@ const outFlag = args.indexOf('--out')
 const outPath = outFlag >= 0 ? args[outFlag + 1] : '.scratch/shot.png'
 const htmlFlag = args.indexOf('--html')
 const htmlSelector = htmlFlag >= 0 ? args[htmlFlag + 1] : null
+const flowFlag = args.indexOf('--flow')
+const flow = flowFlag >= 0 ? args[flowFlag + 1] : 'board'
+const targetFlag = args.indexOf('--target')
+const targetDir = targetFlag >= 0 ? args[targetFlag + 1] : null
 const port = 9300 + Math.floor(Math.random() * 300)
 
 const chromePath = await findChrome()
@@ -135,6 +142,8 @@ try {
       emptyVisible: !document.querySelector('#empty')?.hidden,
       firstCardTitle: text('.ev-card .ev-title'),
       graphHidden: document.querySelector('#graph')?.hidden,
+      dataDir: text('#data-dir'),
+      dataDirBtn: !document.querySelector('#btn-data-dir')?.disabled,
     }
   })()`)
 
@@ -142,41 +151,83 @@ try {
     .filter((event) => event.method === 'Runtime.exceptionThrown' || (event.method === 'Log.entryAdded' && ['error'].includes(event.params?.entry?.level)))
     .map((event) => event.params?.exceptionDetails?.text ?? event.params?.entry?.text)
 
-  // 交互 1：点开第一张卡片，看详情面板
-  await evaluate(`document.querySelector('.ev-card')?.click(); true`)
-  await sleep(500)
-  const afterCardClick = await evaluate(`(() => ({
-    inspectorHidden: document.querySelector('#inspector')?.hidden,
-    inspectorTitle: document.querySelector('#inspector h3')?.textContent ?? null,
-    taskRows: document.querySelectorAll('#inspector .task-row').length,
-    bodyHasInspector: document.querySelector('.body')?.classList.contains('has-inspector'),
-  }))()`)
+  let config = null
+  let afterCardClick = null
+  let graph = null
+  let taskToggle = null
+  let afterToggle = null
 
-  // 交互 2：切到依赖图
-  await evaluate(`document.querySelector('[data-view-btn="graph"]')?.click(); true`)
-  await sleep(600)
-  const graph = await evaluate(`(() => ({
-    graphHidden: document.querySelector('#graph')?.hidden,
-    nodes: document.querySelectorAll('.graph-node').length,
-    edges: document.querySelectorAll('.graph-edge').length,
-  }))()`)
+  if (flow === 'config') {
+    await evaluate(`document.querySelector('#btn-data-dir')?.click(); true`)
+    await sleep(450)
+    const opened = await evaluate(`(() => ({
+      open: document.querySelector('#dialog-data-dir')?.open ?? false,
+      note: document.querySelector('#data-dir-note')?.textContent?.trim() ?? null,
+      value: document.querySelector('#data-dir-input')?.value ?? null,
+      inputDisabled: document.querySelector('#data-dir-input')?.disabled ?? null,
+      applyHidden: document.querySelector('#btn-data-dir-apply')?.hidden ?? null,
+      optionsHidden: document.querySelector('#data-dir-options')?.hidden ?? null,
+      drives: document.querySelectorAll('#drive-row .chip-btn').length,
+      migrate: document.querySelector('#data-dir-migrate')?.checked ?? null,
+    }))()`)
 
-  await evaluate(`document.querySelector('[data-view-btn="board"]')?.click(); true`)
-  await sleep(400)
+    if (targetDir) {
+      await evaluate(`(() => {
+        const input = document.querySelector('#data-dir-input')
+        if (input) { input.value = ${JSON.stringify(targetDir)}; input.dispatchEvent(new Event('input', { bubbles: true })) }
+        return true
+      })()`)
+      await sleep(120)
+      await evaluate(`document.querySelector('#form-data-dir')?.requestSubmit(); true`)
+      await sleep(1500)
+    }
 
-  // 交互 3：勾掉第一张卡片上的首个待办
-  const taskToggle = await evaluate(`(() => {
-    const box = document.querySelector('.ev-card .ev-task input')
-    if (!box) return { skipped: true }
-    box.click()
-    return { skipped: false }
-  })()`)
-  await sleep(900)
-  const afterToggle = await evaluate(`(() => ({
-    status: document.querySelector('#status-msg')?.textContent ?? null,
-    firstCardStatus: document.querySelector('.ev-card')?.dataset.status ?? null,
-    toast: document.querySelector('#toast')?.textContent ?? null,
-  }))()`)
+    const after = await evaluate(`(() => ({
+      open: document.querySelector('#dialog-data-dir')?.open ?? false,
+      dataDir: document.querySelector('#data-dir')?.textContent?.trim() ?? null,
+      toast: document.querySelector('#toast')?.textContent?.trim() ?? null,
+      wfCount: document.querySelectorAll('#wf-list .wf-item').length,
+      status: document.querySelector('#status-msg')?.textContent?.trim() ?? null,
+      conn: document.querySelector('#conn em')?.textContent?.trim() ?? null,
+    }))()`)
+    config = { opened, after }
+  } else {
+    // 交互 1：点开第一张卡片，看详情面板
+    await evaluate(`document.querySelector('.ev-card')?.click(); true`)
+    await sleep(500)
+    afterCardClick = await evaluate(`(() => ({
+      inspectorHidden: document.querySelector('#inspector')?.hidden,
+      inspectorTitle: document.querySelector('#inspector h3')?.textContent ?? null,
+      taskRows: document.querySelectorAll('#inspector .task-row').length,
+      bodyHasInspector: document.querySelector('.body')?.classList.contains('has-inspector'),
+    }))()`)
+
+    // 交互 2：切到依赖图
+    await evaluate(`document.querySelector('[data-view-btn="graph"]')?.click(); true`)
+    await sleep(600)
+    graph = await evaluate(`(() => ({
+      graphHidden: document.querySelector('#graph')?.hidden,
+      nodes: document.querySelectorAll('.graph-node').length,
+      edges: document.querySelectorAll('.graph-edge').length,
+    }))()`)
+
+    await evaluate(`document.querySelector('[data-view-btn="board"]')?.click(); true`)
+    await sleep(400)
+
+    // 交互 3：勾掉第一张卡片上的首个待办
+    taskToggle = await evaluate(`(() => {
+      const box = document.querySelector('.ev-card .ev-task input')
+      if (!box) return { skipped: true }
+      box.click()
+      return { skipped: false }
+    })()`)
+    await sleep(900)
+    afterToggle = await evaluate(`(() => ({
+      status: document.querySelector('#status-msg')?.textContent ?? null,
+      firstCardStatus: document.querySelector('.ev-card')?.dataset.status ?? null,
+      toast: document.querySelector('#toast')?.textContent ?? null,
+    }))()`)
+  }
 
   const shot = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false })
   await fs.mkdir(path.dirname(path.resolve(outPath)), { recursive: true })
@@ -188,7 +239,7 @@ try {
 
   console.log(
     JSON.stringify(
-      { url, report, afterCardClick, graph, taskToggle, afterToggle, consoleErrors, html, screenshot: path.resolve(outPath) },
+      { url, flow, report, afterCardClick, graph, taskToggle, afterToggle, config, consoleErrors, html, screenshot: path.resolve(outPath) },
       null,
       2,
     ),
