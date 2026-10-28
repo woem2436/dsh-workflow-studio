@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>流程工坊 · Workflow Studio</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%235b8cff'/%3E%3Cpath d='M9 11h9M9 16h14M9 21h6' stroke='white' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div id="app" class="app" data-view="board">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="18" height="18">
+              <path d="M5 6h9M5 12h14M5 18h6" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" fill="none" />
+            </svg>
+          </span>
+          <div class="brand-text">
+            <h1>流程工坊</h1>
+            <p id="meta-version">Workflow Studio</p>
+          </div>
+        </div>
+
+        <div class="topbar-mid">
+          <div class="segmented" role="tablist" aria-label="视图">
+            <button type="button" data-view-btn="board" class="is-on" role="tab" aria-selected="true">看板</button>
+            <button type="button" data-view-btn="graph" role="tab" aria-selected="false">依赖图</button>
+          </div>
+        </div>
+
+        <div class="topbar-right">
+          <span id="conn" class="conn" title="实时连接状态"><i></i><em>连接中</em></span>
+          <button type="button" id="btn-refresh" class="btn ghost" title="重新读取">
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span>刷新</span>
+          </button>
+          <button type="button" id="btn-new-workflow" class="btn primary">
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+            <span>新建流程</span>
+          </button>
+        </div>
+      </header>
+
+      <div class="body">
+        <aside class="rail" aria-label="流程列表">
+          <div class="rail-head">
+            <h2>流程</h2>
+            <span id="wf-count" class="rail-count">0</span>
+          </div>
+          <ul id="wf-list" class="wf-list"></ul>
+          <div class="rail-foot">
+            <span class="foot-label">数据目录</span>
+            <code id="data-dir">—</code>
+          </div>
+        </aside>
+
+        <main class="canvas">
+          <div class="canvas-head">
+            <div class="wf-identity">
+              <div class="wf-name-row">
+                <h2 id="wf-name">未选择流程</h2>
+                <span id="wf-status" class="pill pill-idle">—</span>
+              </div>
+              <p id="wf-goal" class="wf-goal">从左侧选择一个流程，或者新建一个。</p>
+            </div>
+            <div class="wf-progress">
+              <div class="progress-track"><div id="wf-progress-bar" class="progress-fill"></div></div>
+              <div class="progress-meta">
+                <strong id="wf-progress-text">0%</strong>
+                <span id="wf-progress-detail">0 / 0 完成</span>
+              </div>
+            </div>
+            <div class="wf-actions">
+              <button type="button" id="btn-edit-workflow" class="btn ghost" disabled>编辑</button>
+              <button type="button" id="btn-add-event" class="btn primary" disabled>
+                <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+                <span>事件</span>
+              </button>
+            </div>
+          </div>
+
+          <section id="next-strip" class="next-strip" aria-label="下一步"></section>
+
+          <section id="board" class="board" aria-label="事件看板"></section>
+          <section id="graph" class="graph" aria-label="依赖图" hidden>
+            <div id="graph-canvas" class="graph-canvas"></div>
+            <div class="graph-legend">
+              <span><i class="dot dot-ready"></i>可开始</span>
+              <span><i class="dot dot-doing"></i>进行中</span>
+              <span><i class="dot dot-review"></i>待验收</span>
+              <span><i class="dot dot-done"></i>已完成</span>
+              <span><i class="dot dot-blocked"></i>被阻塞</span>
+            </div>
+          </section>
+
+          <div id="empty" class="empty" hidden>
+            <div class="empty-art" aria-hidden="true">
+              <svg viewBox="0 0 120 96" width="140" height="112">
+                <rect x="6" y="14" width="46" height="24" rx="7" class="empty-box" />
+                <rect x="66" y="14" width="46" height="24" rx="7" class="empty-box dim" />
+                <rect x="36" y="58" width="46" height="24" rx="7" class="empty-box" />
+                <path d="M29 38v12a8 8 0 0 0 8 8h-4M89 38v12a8 8 0 0 1-8 8h4" class="empty-line" fill="none" />
+              </svg>
+            </div>
+            <h3>还没有流程</h3>
+            <p>把一个项目的分工拆成有序事件：谁先做、谁依赖谁、每步要交出什么。</p>
+            <button type="button" id="btn-empty-create" class="btn primary">新建第一个流程</button>
+          </div>
+        </main>
+
+        <aside id="inspector" class="inspector" hidden aria-label="事件详情"></aside>
+      </div>
+
+      <footer class="statusbar">
+        <span id="status-msg">就绪</span>
+        <span class="statusbar-right">
+          <span id="counts"></span>
+          <span class="statusbar-hint">拖拽换道 · 勾选推进</span>
+        </span>
+      </footer>
+    </div>
+
+    <dialog id="dialog-workflow" class="dialog">
+      <form method="dialog" class="dialog-form" id="form-workflow">
+        <header>
+          <h3 id="dialog-workflow-title">新建流程</h3>
+          <button type="button" class="icon-btn" data-close aria-label="关闭">✕</button>
+        </header>
+        <label class="field">
+          <span>名称</span>
+          <input name="name" required maxlength="120" placeholder="例如：DSH 插件发布 v1" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>目标<em>可选</em></span>
+          <textarea name="goal" rows="2" placeholder="这个流程要拿到什么结果"></textarea>
+        </label>
+        <label class="field" id="field-template">
+          <span>起始模板</span>
+          <div class="template-grid" id="template-grid"></div>
+        </label>
+        <footer>
+          <button type="button" class="btn ghost" data-close>取消</button>
+          <button type="submit" class="btn primary">创建</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <dialog id="dialog-event" class="dialog">
+      <form method="dialog" class="dialog-form" id="form-event">
+        <header>
+          <h3 id="dialog-event-title">新建事件</h3>
+          <button type="button" class="icon-btn" data-close aria-label="关闭">✕</button>
+        </header>
+        <label class="field">
+          <span>标题</span>
+          <input name="title" required maxlength="160" placeholder="例如：锁定接口契约" autocomplete="off" />
+        </label>
+        <div class="field-row">
+          <label class="field">
+            <span>职能层</span>
+            <select name="layerId" id="event-layer"></select>
+          </label>
+          <label class="field">
+            <span>角色<em>可选</em></span>
+            <input name="role" maxlength="60" placeholder="例如：架构师" autocomplete="off" />
+          </label>
+        </div>
+        <label class="field">
+          <span>依赖<em>可选</em></span>
+          <div class="dep-picker" id="dep-picker"></div>
+        </label>
+        <label class="field">
+          <span>待办<em>每行一条</em></span>
+          <textarea name="tasks" rows="3" placeholder="写接口文档&#10;评审命名"></textarea>
+        </label>
+        <footer>
+          <button type="button" class="btn ghost" data-close>取消</button>
+          <button type="submit" class="btn primary">保存</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

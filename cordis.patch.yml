@@ -1,0 +1,9 @@
+# dsh-workflow-studio bundle patch — inserts this bundle into a profile's layer stack.
+#
+# Dialect: `insert` takes rows whose `id` is the bundle identity (the Loader row id
+# this patch claims) and whose `name` is the package specifier the Loader imports.
+# The main entry (`index.js`) is the host half; `dsh.client` in package.json makes
+# the Web app load `./client.js` as the browser half for the same row.
+- insert:
+    - id: workflow-studio
+      name: 'dsh-workflow-studio'

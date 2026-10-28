@@ -1,0 +1,18 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# local scratch / exploration
+.scratch/
+.tmp/
+tmp/
+*.log
+
+# editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# local workflow data written by the dev harness
+.dev-data/
