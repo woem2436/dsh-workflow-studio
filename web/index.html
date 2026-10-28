@@ -4,161 +4,132 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>流程工坊 · Workflow Studio</title>
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%235b8cff'/%3E%3Cpath d='M9 11h9M9 16h14M9 21h6' stroke='white' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%231F4FD8'/%3E%3Cpath d='M8 10h10M8 16h16M8 22h7' stroke='white' stroke-width='2'/%3E%3C/svg%3E" />
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <div id="app" class="app" data-view="board">
-      <header class="topbar">
+    <div id="app" class="app" data-view="canvas">
+      <header class="top">
         <div class="brand">
-          <span class="brand-mark" aria-hidden="true">
-            <svg viewBox="0 0 24 24" width="18" height="18">
-              <path d="M5 6h9M5 12h14M5 18h6" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" fill="none" />
-            </svg>
-          </span>
-          <div class="brand-text">
-            <h1>流程工坊</h1>
-            <p id="meta-version">Workflow Studio</p>
-          </div>
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span class="brand-name">流程工坊</span>
+          <span id="meta-version" class="brand-meta">Workflow Studio</span>
         </div>
 
-        <div class="topbar-mid">
-          <div class="segmented" role="tablist" aria-label="视图">
-            <button type="button" data-view-btn="board" class="is-on" role="tab" aria-selected="true">看板</button>
-            <button type="button" data-view-btn="canvas" role="tab" aria-selected="false">画布</button>
-            <button type="button" data-view-btn="graph" role="tab" aria-selected="false">总览</button>
-          </div>
-        </div>
+        <nav class="views" role="tablist" aria-label="视图">
+          <button type="button" data-view-btn="canvas" class="is-on" role="tab" aria-selected="true">画布</button>
+          <button type="button" data-view-btn="board" role="tab" aria-selected="false">看板</button>
+        </nav>
 
-        <div class="topbar-right">
+        <div class="top-right">
           <span id="conn" class="conn" title="实时连接状态"><i></i><em>连接中</em></span>
-          <button type="button" id="btn-refresh" class="btn ghost" title="重新读取">
-            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            <span>刷新</span>
-          </button>
-          <button type="button" id="btn-new-workflow" class="btn primary">
-            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
-            <span>新建流程</span>
-          </button>
+          <button type="button" id="btn-refresh" class="btn" title="重新读取">刷新</button>
+          <button type="button" id="btn-new-workflow" class="btn btn-primary">新建流程</button>
         </div>
       </header>
 
       <div class="body">
         <aside class="rail" aria-label="流程列表">
           <div class="rail-head">
-            <h2>流程</h2>
-            <span id="wf-count" class="rail-count">0</span>
+            <span>流程</span>
+            <b id="wf-count">0</b>
           </div>
           <ul id="wf-list" class="wf-list"></ul>
           <div class="rail-foot">
-            <div class="foot-row">
-              <span class="foot-label">数据目录</span>
-              <button id="btn-data-dir" type="button" class="link-btn" title="更换数据目录">更改</button>
+            <div class="dir-line">
+              <span>数据目录</span>
+              <button id="btn-data-dir" type="button" class="link" title="更换数据目录">更改</button>
             </div>
             <code id="data-dir">—</code>
           </div>
         </aside>
 
-        <main class="canvas">
-          <div class="canvas-head">
-            <div class="wf-identity">
+        <main class="main">
+          <div class="wf-bar">
+            <div class="wf-bar-left">
               <div id="wf-crumbs" class="crumbs" hidden></div>
-              <div class="wf-name-row">
-                <h2 id="wf-name">未选择流程</h2>
-                <span id="wf-status" class="pill pill-idle">—</span>
+              <div class="wf-title">
+                <h1 id="wf-name">未选择流程</h1>
+                <span id="wf-status" class="state">—</span>
               </div>
               <p id="wf-goal" class="wf-goal">从左侧选择一个流程，或者新建一个。</p>
-              <div id="wf-signature" class="signature" hidden></div>
+              <div id="wf-signature" class="sig" hidden></div>
             </div>
-            <div class="wf-progress">
-              <div class="progress-track"><div id="wf-progress-bar" class="progress-fill"></div></div>
-              <div class="progress-meta">
-                <strong id="wf-progress-text">0%</strong>
-                <span id="wf-progress-detail">0 / 0 完成</span>
+
+            <div class="wf-bar-right">
+              <div class="meter">
+                <div class="meter-track"><i id="wf-progress-bar"></i></div>
+                <span id="wf-progress-text" class="meter-value">0%</span>
+                <span id="wf-progress-detail" class="meter-note">0 / 0</span>
               </div>
-            </div>
-            <div class="wf-actions">
-              <button type="button" id="btn-edit-workflow" class="btn ghost" disabled>编辑</button>
-              <button type="button" id="btn-add-event" class="btn primary" disabled>
-                <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
-                <span>事件</span>
-              </button>
+              <div class="wf-actions">
+                <button type="button" id="btn-edit-workflow" class="btn" disabled>编辑</button>
+                <button type="button" id="btn-add-event" class="btn btn-primary" disabled>＋ 事件</button>
+              </div>
             </div>
           </div>
 
-          <section id="next-strip" class="next-strip" aria-label="下一步"></section>
+          <section id="next-strip" class="next" aria-label="下一步"></section>
 
           <section id="board" class="board" aria-label="事件看板"></section>
 
           <section id="canvas-view" class="canvas-view" aria-label="矩阵画布" hidden>
-            <div id="canvas-viewport" class="canvas-viewport">
-              <div id="canvas-world" class="canvas-world">
-                <svg id="canvas-edges" class="canvas-edges" aria-hidden="true">
+            <div id="canvas-viewport" class="viewport">
+              <div id="canvas-world" class="world">
+                <svg id="canvas-edges" class="edges" aria-hidden="true">
                   <defs>
-                    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
-                      <path d="M0 0 L8 3 L0 6 z" class="arrow-head" />
+                    <marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+                      <path d="M0 0 L8 3 L0 6 z" class="head head-flow" />
                     </marker>
-                    <marker id="arrow-done" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
-                      <path d="M0 0 L8 3 L0 6 z" class="arrow-head is-done" />
+                    <marker id="arrow-data" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+                      <path d="M0 0 L8 3 L0 6 z" class="head head-data" />
+                    </marker>
+                    <marker id="arrow-gate" markerWidth="11" markerHeight="11" refX="9" refY="4" orient="auto" markerUnits="strokeWidth">
+                      <path d="M0 0 L8 4 L0 8 L2 4 z" class="head head-gate" />
                     </marker>
                   </defs>
                 </svg>
-                <div id="canvas-nodes" class="canvas-nodes"></div>
+                <div id="canvas-nodes" class="nodes"></div>
               </div>
             </div>
+
             <div class="canvas-tools" aria-label="画布工具">
               <button type="button" data-canvas="zoom-out" title="缩小">−</button>
               <button type="button" data-canvas="zoom" id="canvas-zoom" class="zoom-label" title="重置为 100%">100%</button>
               <button type="button" data-canvas="zoom-in" title="放大">＋</button>
-              <span class="tool-sep"></span>
               <button type="button" data-canvas="fit" title="适应窗口">适应</button>
-              <button type="button" data-canvas="auto" title="按依赖重新排版">自动排版</button>
+              <button type="button" data-canvas="auto" title="按依赖重新排版">排版</button>
             </div>
-            <div class="graph-legend">
-              <span><i class="dot dot-ready"></i>可开始</span>
-              <span><i class="dot dot-doing"></i>进行中</span>
-              <span><i class="dot dot-review"></i>待验收</span>
-              <span><i class="dot dot-done"></i>已完成</span>
-              <span><i class="dot dot-blocked"></i>被阻塞</span>
-              <span class="legend-hint">拖动矩阵 · 双击编辑 · 空格拖动画布</span>
-            </div>
-          </section>
 
-          <section id="graph" class="graph" aria-label="依赖总览" hidden>
-            <div id="graph-canvas" class="graph-canvas"></div>
-            <div class="graph-legend">
-              <span><i class="dot dot-ready"></i>可开始</span>
-              <span><i class="dot dot-doing"></i>进行中</span>
-              <span><i class="dot dot-review"></i>待验收</span>
-              <span><i class="dot dot-done"></i>已完成</span>
-              <span><i class="dot dot-blocked"></i>被阻塞</span>
+            <div class="legend">
+              <span><i class="rule"></i>顺序</span>
+              <span><i class="rule rule-data"></i>数据</span>
+              <span><i class="rule rule-gate"></i>验收</span>
             </div>
           </section>
 
           <div id="empty" class="empty" hidden>
             <div class="empty-art" aria-hidden="true">
-              <svg viewBox="0 0 120 96" width="140" height="112">
-                <rect x="6" y="14" width="46" height="24" rx="7" class="empty-box" />
-                <rect x="66" y="14" width="46" height="24" rx="7" class="empty-box dim" />
-                <rect x="36" y="58" width="46" height="24" rx="7" class="empty-box" />
-                <path d="M29 38v12a8 8 0 0 0 8 8h-4M89 38v12a8 8 0 0 1-8 8h4" class="empty-line" fill="none" />
+              <svg viewBox="0 0 136 88" width="150" height="97">
+                <rect x="8" y="12" width="42" height="26" class="empty-box" />
+                <rect x="86" y="12" width="42" height="26" class="empty-box" />
+                <rect x="47" y="52" width="42" height="26" class="empty-box" />
+                <path d="M50 25h36M64 38v8h15v6" class="empty-line" fill="none" />
               </svg>
             </div>
             <h3>还没有流程</h3>
-            <p>把一个项目的分工拆成有序事件：谁先做、谁依赖谁、每步要交出什么。</p>
-            <button type="button" id="btn-empty-create" class="btn primary">新建第一个流程</button>
+            <p>把一个项目的分工拆成矩阵：谁先做、谁依赖谁、每步要交出什么。</p>
+            <button type="button" id="btn-empty-create" class="btn btn-primary">新建第一个流程</button>
           </div>
         </main>
 
         <aside id="inspector" class="inspector" hidden aria-label="事件详情"></aside>
       </div>
 
-      <footer class="statusbar">
+      <footer class="status">
         <span id="status-msg">就绪</span>
-        <span class="statusbar-right">
-          <span id="counts"></span>
-          <span class="statusbar-hint">拖拽换道 · 勾选推进</span>
-        </span>
+        <span id="counts" class="status-counts"></span>
+        <span class="status-hint">拖动矩阵 · 双击编辑 · 滚轮缩放</span>
       </footer>
     </div>
 
@@ -181,8 +152,8 @@
           <div class="template-grid" id="template-grid"></div>
         </label>
         <footer>
-          <button type="button" class="btn ghost" data-close>取消</button>
-          <button type="submit" class="btn primary">创建</button>
+          <button type="button" class="btn" data-close>取消</button>
+          <button type="submit" class="btn btn-primary">创建</button>
         </footer>
       </form>
     </dialog>
@@ -216,8 +187,8 @@
           <textarea name="tasks" rows="3" placeholder="写接口文档&#10;评审命名"></textarea>
         </label>
         <footer>
-          <button type="button" class="btn ghost" data-close>取消</button>
-          <button type="submit" class="btn primary">保存</button>
+          <button type="button" class="btn" data-close>取消</button>
+          <button type="submit" class="btn btn-primary">保存</button>
         </footer>
       </form>
     </dialog>
@@ -228,7 +199,7 @@
           <h3>数据目录</h3>
           <button type="button" class="icon-btn" data-close aria-label="关闭">✕</button>
         </header>
-        <p class="dialog-note" id="data-dir-note">流程会以 JSON 文件存在这个目录下，换目录后新写入都到新位置。</p>
+        <p class="note" id="data-dir-note">流程会以 JSON 文件存在这个目录下，换目录后新写入都到新位置。</p>
         <label class="field">
           <span>绝对路径</span>
           <input name="dataDir" id="data-dir-input" required spellcheck="false" autocomplete="off" placeholder="D:\DSH Workplace\workflow-studio" />
@@ -241,10 +212,10 @@
           </label>
         </div>
         <footer>
-          <button type="button" class="btn ghost" id="btn-data-dir-reset">恢复默认</button>
-          <span class="foot-spacer"></span>
-          <button type="button" class="btn ghost" data-close>取消</button>
-          <button type="submit" class="btn primary" id="btn-data-dir-apply">切换</button>
+          <button type="button" class="btn" id="btn-data-dir-reset">恢复默认</button>
+          <span class="spacer"></span>
+          <button type="button" class="btn" data-close>取消</button>
+          <button type="submit" class="btn btn-primary" id="btn-data-dir-apply">切换</button>
         </footer>
       </form>
     </dialog>

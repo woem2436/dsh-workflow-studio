@@ -199,6 +199,74 @@ describe('canvas HTTP surface', () => {
   })
 })
 
+describe('link kinds', () => {
+  let temp
+  let store
+
+  before(async () => {
+    temp = await tempDir('workflow-links-')
+    store = new WorkflowStore({ dir: temp.dir })
+    await store.ready()
+  })
+
+  after(async () => {
+    await temp.cleanup()
+  })
+
+  it('defaults to flow and only stores non-default kinds', async () => {
+    const created = await store.create({ name: '连线', template: 'blank' })
+    const a = await store.addEvent(created.id, { title: '上游', layerId: 'build' })
+    const b = await store.addEvent(created.id, { title: '下游', layerId: 'verify', dependsOn: [a.event.id] })
+    assert.equal(b.event.links, undefined)
+
+    const data = await store.updateEvent(created.id, b.event.id, { links: { [a.event.id]: 'data' } })
+    assert.deepEqual(data.event.links, { [a.event.id]: 'data' })
+
+    const back = await store.updateEvent(created.id, b.event.id, { links: {} })
+    assert.equal(back.event.links, undefined)
+
+    const reloaded = new WorkflowStore({ dir: temp.dir })
+    await reloaded.ready()
+    assert.equal((await reloaded.get(created.id)).events.find((event) => event.id === b.event.id).links, undefined)
+  })
+
+  it('keeps a gate link across reloads and prunes it with its dependency', async () => {
+    const created = await store.create({ name: '验收闸口', template: 'blank' })
+    const a = await store.addEvent(created.id, { title: 'A', layerId: 'build' })
+    const b = await store.addEvent(created.id, {
+      title: 'B',
+      layerId: 'verify',
+      dependsOn: [a.event.id],
+      links: { [a.event.id]: 'gate' },
+    })
+    assert.deepEqual(b.event.links, { [a.event.id]: 'gate' })
+
+    const reloaded = new WorkflowStore({ dir: temp.dir })
+    await reloaded.ready()
+    assert.deepEqual(
+      (await reloaded.get(created.id)).events.find((event) => event.id === b.event.id).links,
+      { [a.event.id]: 'gate' },
+    )
+
+    const pruned = await store.updateEvent(created.id, b.event.id, { dependsOn: [] })
+    assert.equal(pruned.event.links, undefined)
+  })
+
+  it('rejects malformed links', async () => {
+    const created = await store.create({ name: '坏连线', template: 'blank' })
+    const a = await store.addEvent(created.id, { title: 'A', layerId: 'build' })
+    const b = await store.addEvent(created.id, { title: 'B', layerId: 'build', dependsOn: [a.event.id] })
+    await assert.rejects(
+      () => store.updateEvent(created.id, b.event.id, { links: 'nope' }),
+      (error) => error.code === 'invalid',
+    )
+    await assert.rejects(
+      () => store.updateEvent(created.id, a.event.id, { dependsOn: [b.event.id], links: { [b.event.id]: 'data' } }),
+      (error) => error.code === 'cycle',
+    )
+  })
+})
+
 async function exists(file) {
   try {
     await fs.stat(file)

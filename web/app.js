@@ -21,7 +21,7 @@ const state = {
   view: null,
   selectedId: null,
   selectedEventId: null,
-  mode: 'board',
+  mode: 'canvas',
   template: 'project',
   drag: null,
   reloadTimer: null,
@@ -208,19 +208,15 @@ function renderRail() {
           role: 'button',
           'aria-current': isOn ? 'true' : 'false',
         },
+        h('div', { class: 'wf-item-top' }, h('span', { class: 'wf-item-name', text: item.name })),
         h(
           'div',
-          { class: 'wf-item-top' },
-          h('span', { class: 'wf-item-name', text: item.name }),
-          h('span', { class: `pill pill-${item.status}`, text: WF_STATUS_LABEL[item.status] ?? item.status }),
+          { class: 'wf-item-sub' },
+          h('span', { text: WF_STATUS_LABEL[item.status] ?? item.status }),
+          h('span', { text: `${item.progress?.done ?? 0}/${item.progress?.total ?? 0}` }),
+          h('span', { text: relativeTime(item.updatedAt) }),
         ),
         h('div', { class: 'wf-item-bar' }, h('i', { style: { width: `${percent}%` } })),
-        h(
-          'div',
-          { class: 'wf-item-meta' },
-          h('span', { class: 'wf-item-sub', text: `${item.progress?.done ?? 0}/${item.progress?.total ?? 0} 完成` }),
-          h('span', { class: 'wf-item-sub', text: relativeTime(item.updatedAt) }),
-        ),
       ),
     )
   }
@@ -239,7 +235,7 @@ function renderHead() {
 
   if (!has) {
     $('#wf-name').textContent = '未选择流程'
-    $('#wf-status').className = 'pill pill-idle'
+    $('#wf-status').className = 'state'
     $('#wf-status').textContent = '—'
     $('#wf-goal').textContent = state.list.length ? '从左侧选择一个流程。' : '新建一个流程，把项目分工拆成有序事件。'
     $('#wf-progress-bar').style.width = '0%'
@@ -251,13 +247,13 @@ function renderHead() {
 
   const progress = state.view.progress ?? workflow.progress ?? {}
   $('#wf-name').textContent = workflow.name
-  $('#wf-status').className = `pill pill-${workflow.status}`
+  $('#wf-status').className = `state state-${workflow.status}`
   $('#wf-status').textContent = WF_STATUS_LABEL[workflow.status] ?? workflow.status
   $('#wf-goal').textContent = workflow.goal || workflow.description || '还没有写目标'
   $('#wf-progress-bar').style.width = `${progress.percent ?? 0}%`
   $('#wf-progress-text').textContent = `${progress.percent ?? 0}%`
-  $('#wf-progress-detail').textContent = `${progress.done ?? 0} / ${progress.total ?? 0} 完成`
-  $('#counts').textContent = `${progress.total ?? 0} 事件 · 可开始 ${progress.ready ?? 0} · 进行中 ${progress.doing ?? 0} · 待验收 ${progress.review ?? 0} · 完成 ${progress.done ?? 0}`
+  $('#wf-progress-detail').textContent = `${progress.done ?? 0}/${progress.total ?? 0}`
+  $('#counts').textContent = `${progress.total ?? 0} 事件 · ${progress.ready ?? 0} 可开始 · ${progress.doing ?? 0} 进行中 · ${progress.review ?? 0} 待验收 · ${progress.done ?? 0} 完成`
 }
 
 function renderNext() {
@@ -392,25 +388,18 @@ function renderCard(workflow, event, layer) {
       'div',
       { class: 'ev-top' },
       h('i', { class: `dot dot-${event.status}`, title: STATUS_LABEL[event.status] }),
-      h('span', { class: 'ev-order', text: `#${event.order + 1}` }),
+      h('span', { class: 'ev-order', text: `#${String(event.order + 1).padStart(2, '0')}` }),
       deps.length
         ? h('span', {
             class: 'tag dep',
-            text: `↳ ${deps.length}`,
+            text: `依赖 ${deps.length}`,
             title: `依赖：${deps.map((dep) => dep.title).join('、')}`,
           })
         : null,
-      h('span', { class: 'badge-count', style: { marginLeft: 'auto' }, text: STATUS_LABEL[event.status] }),
+      h('span', { class: 'ev-state', text: STATUS_LABEL[event.status] }),
     ),
     h('h4', { class: 'ev-title', text: event.title }),
-    event.role || tasks.length
-      ? h(
-          'div',
-          { class: 'ev-tags' },
-          event.role ? h('span', { class: 'tag role', text: event.role }) : null,
-          tasks.length ? h('span', { class: 'tag', text: `待办 ${doneTasks}/${tasks.length}` }) : null,
-        )
-      : null,
+    event.role ? h('div', { class: 'ev-tags' }, h('span', { class: 'tag role', text: event.role })) : null,
     openTask
       ? h(
           'label',
@@ -441,7 +430,7 @@ function renderCard(workflow, event, layer) {
         quickLabel
           ? h('button', {
               type: 'button',
-              class: 'btn tiny',
+              class: 'ev-quick',
               text: quickLabel,
               title: `标记为 ${STATUS_LABEL[quickTarget]}`,
               onclick: () => setEventStatus(event.id, quickTarget),
@@ -496,123 +485,6 @@ async function onTrackDrop(event, track, layerId) {
   })
 }
 
-/* ── 渲染：依赖图 ───────────────────────────────────── */
-
-function renderGraph() {
-  const section = $('#graph')
-  const workflow = currentWorkflow()
-  section.hidden = state.mode !== 'graph' || !workflow
-  if (!workflow || state.mode !== 'graph') return
-
-  const NODE_W = 206
-  const NODE_H = 66
-  const GAP_X = 66
-  const GAP_Y = 20
-  const PAD = 24
-
-  const byId = new Map(workflow.events.map((event) => [event.id, event]))
-  const depthCache = new Map()
-  const depthOf = (id, seen = new Set()) => {
-    if (depthCache.has(id)) return depthCache.get(id)
-    if (seen.has(id)) return 0
-    seen.add(id)
-    const event = byId.get(id)
-    const deps = (event?.dependsOn ?? []).filter((dep) => byId.has(dep))
-    const value = deps.length ? 1 + Math.max(...deps.map((dep) => depthOf(dep, seen))) : 0
-    depthCache.set(id, value)
-    return value
-  }
-
-  const columns = new Map()
-  for (const event of workflow.events) {
-    const depth = depthOf(event.id)
-    if (!columns.has(depth)) columns.set(depth, [])
-    columns.get(depth).push(event)
-  }
-  const layerOrder = new Map(workflow.layers.map((layer, index) => [layer.id, index]))
-  for (const [depth, events] of columns) {
-    events.sort((left, right) => {
-      const laneDiff = (layerOrder.get(left.layerId) ?? 0) - (layerOrder.get(right.layerId) ?? 0)
-      return laneDiff !== 0 ? laneDiff : left.order - right.order
-    })
-    columns.set(depth, events)
-  }
-
-  const position = new Map()
-  let maxRows = 0
-  for (const [depth, events] of [...columns].sort((left, right) => left[0] - right[0])) {
-    maxRows = Math.max(maxRows, events.length)
-    events.forEach((event, row) => {
-      position.set(event.id, {
-        x: PAD + depth * (NODE_W + GAP_X),
-        y: PAD + row * (NODE_H + GAP_Y),
-      })
-    })
-  }
-
-  const width = PAD * 2 + Math.max(1, columns.size) * (NODE_W + GAP_X) - GAP_X
-  const height = PAD * 2 + Math.max(1, maxRows) * (NODE_H + GAP_Y) - GAP_Y
-
-  const canvas = $('#graph-canvas')
-  canvas.replaceChildren()
-  canvas.style.width = `${width}px`
-  canvas.style.height = `${height}px`
-
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
-  svg.setAttribute('class', 'graph-svg')
-  svg.setAttribute('width', String(width))
-  svg.setAttribute('height', String(height))
-  svg.setAttribute('viewBox', `0 0 ${width} ${height}`)
-
-  const doneIds = new Set(workflow.events.filter((event) => ['done', 'skipped'].includes(event.status)).map((event) => event.id))
-
-  for (const event of workflow.events) {
-    const target = position.get(event.id)
-    for (const depId of event.dependsOn ?? []) {
-      const source = position.get(depId)
-      if (!source || !target) continue
-      const x1 = source.x + NODE_W
-      const y1 = source.y + NODE_H / 2
-      const x2 = target.x
-      const y2 = target.y + NODE_H / 2
-      const bend = Math.max(28, (x2 - x1) / 2)
-      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
-      path.setAttribute('d', `M ${x1} ${y1} C ${x1 + bend} ${y1}, ${x2 - bend} ${y2}, ${x2} ${y2}`)
-      path.setAttribute('class', `graph-edge${doneIds.has(depId) ? ' is-satisfied' : ''}${!doneIds.has(depId) && doneIds.has(event.id) === false && event.status !== 'blocked' ? '' : ''}`)
-      svg.append(path)
-    }
-  }
-  canvas.append(svg)
-
-  for (const event of workflow.events) {
-    const spot = position.get(event.id)
-    if (!spot) continue
-    canvas.append(
-      h(
-        'div',
-        {
-          class: `graph-node${state.selectedEventId === event.id ? ' is-selected' : ''}`,
-          style: { left: `${spot.x}px`, top: `${spot.y}px`, width: `${NODE_W}px`, height: `${NODE_H}px` },
-          onclick: () => openInspector(event.id),
-          tabindex: '0',
-          role: 'button',
-          onkeydown: (keyboard) => {
-            if (keyboard.key === 'Enter') openInspector(event.id)
-          },
-        },
-        h('h4', { text: event.title }),
-        h(
-          'div',
-          { class: 'gn-meta' },
-          h('i', { class: `dot dot-${event.status}` }),
-          h('span', { text: STATUS_LABEL[event.status] }),
-          h('span', { text: `· ${layerOf(workflow, event.layerId)?.name ?? event.layerId}` }),
-        ),
-      ),
-    )
-  }
-}
-
 /* ── 渲染：面包屑 / 函数签名 / 矩阵画布 ─────────────── */
 
 const NODE_W = 236
@@ -651,7 +523,7 @@ function renderCrumbs(workflow) {
   if (!chain.length) return
   chain.forEach((item, index) => {
     if (index > 0) box.append(h('span', { class: 'crumb-sep', text: '/' }))
-    box.append(h('button', { type: 'button', text: item.name, title: `返回 ${item.name}`, onclick: () => selectWorkflow(item.id) }))
+    box.append(h('button', { type: 'button', class: 'crumb', text: item.name, title: `返回 ${item.name}`, onclick: () => selectWorkflow(item.id) }))
   })
   box.append(h('span', { class: 'crumb-sep', text: '/' }))
   box.append(h('span', { class: 'crumb-now', text: workflow.name }))
@@ -670,9 +542,9 @@ function renderSignature(workflow) {
       'span',
       { class: 'sig-chip', title: port.description || `${kind === 'in' ? '入参' : '出参'} ${port.name}` },
       h('b', { text: port.name }),
-      h('i', { text: `${port.type}${port.required === false ? '?' : ''}` }),
+      h('em', { text: `${port.type}${port.required === false ? '?' : ''}` }),
     )
-  box.append(h('span', { text: '函数' }))
+  box.append(h('span', { class: 'sig-label', text: '签名' }))
   for (const port of inputs) box.append(chip(port, 'in'))
   box.append(h('span', { class: 'sig-arrow', text: '→' }))
   for (const port of outputs) box.append(chip(port, 'out'))
@@ -687,18 +559,39 @@ function applyCanvasTransform() {
   if (label) label.textContent = `${Math.round(zoom * 100)}%`
 }
 
-function edgePath(source, target, satisfied) {
+function edgePath(source, target, kind, satisfied) {
   const from = posOf(source)
   const to = posOf(target)
-  const x1 = from.x + NODE_W
-  const y1 = from.y + NODE_H / 2
-  const x2 = to.x
-  const y2 = to.y + NODE_H / 2
-  const bend = Math.max(46, Math.abs(x2 - x1) / 2)
+  const forward = to.x >= from.x + NODE_W + 8
+  const below = to.y >= from.y + NODE_H + 8
+  let d
+  if (forward) {
+    const x1 = from.x + NODE_W
+    const y1 = from.y + NODE_H / 2
+    const x2 = to.x
+    const y2 = to.y + NODE_H / 2
+    const bend = Math.max(46, Math.abs(x2 - x1) / 2)
+    d = `M ${x1} ${y1} C ${x1 + bend} ${y1}, ${x2 - bend} ${y2}, ${x2} ${y2}`
+  } else if (below) {
+    // 换行折返：从下边缘出、上边缘入，避免线从右边绕一大圈
+    const x1 = from.x + NODE_W / 2
+    const y1 = from.y + NODE_H
+    const x2 = to.x + NODE_W / 2
+    const y2 = to.y
+    const bend = Math.max(48, Math.abs(y2 - y1) / 2)
+    d = `M ${x1} ${y1} C ${x1} ${y1 + bend}, ${x2} ${y2 - bend}, ${x2} ${y2}`
+  } else {
+    const x1 = from.x
+    const y1 = from.y + NODE_H / 2
+    const x2 = to.x + NODE_W
+    const y2 = to.y + NODE_H / 2
+    const bend = Math.max(52, Math.abs(x1 - x2) / 2)
+    d = `M ${x1} ${y1} C ${x1 - bend} ${y1}, ${x2 + bend} ${y2}, ${x2} ${y2}`
+  }
   return svgEl('path', {
-    class: `edge${satisfied ? ' is-satisfied' : ''}`,
-    d: `M ${x1} ${y1} C ${x1 + bend} ${y1}, ${x2 - bend} ${y2}, ${x2} ${y2}`,
-    'marker-end': `url(#${satisfied ? 'arrow-done' : 'arrow'})`,
+    class: `edge edge-${kind}${satisfied ? ' is-satisfied' : ''}`,
+    d,
+    'marker-end': `url(#${kind === 'data' ? 'arrow-data' : kind === 'gate' ? 'arrow-gate' : 'arrow'})`,
   })
 }
 
@@ -712,12 +605,14 @@ function drawEdges() {
   for (const event of workflow.events) {
     for (const depId of event.dependsOn) {
       const source = byId.get(depId)
-      if (source) layer.append(edgePath(source, event, source.status === 'done' || source.status === 'skipped'))
+      if (!source) continue
+      const kind = event.links?.[depId] ?? 'flow'
+      layer.append(edgePath(source, event, kind, source.status === 'done' || source.status === 'skipped'))
     }
   }
 }
 
-function canvasNode(workflow, event) {
+function canvasNode(workflow, event, seq) {
   const tasks = event.tasks ?? []
   const done = tasks.filter((task) => task.done).length
   const layer = layerOf(workflow, event.layerId)
@@ -730,19 +625,20 @@ function canvasNode(workflow, event) {
       style: { left: `${at.x}px`, top: `${at.y}px` },
       title: event.description || event.title,
     },
-    event.childId ? h('span', { class: 'cnode-child-badge', text: '⊞', title: '包含子矩阵' }) : null,
+    event.childId ? h('span', { class: 'cnode-child-badge', title: '包含子矩阵' }) : null,
     h(
       'div',
       { class: 'cnode-top' },
       h('i', { class: `dot dot-${event.status}` }),
-      h('span', { class: 'cnode-title', text: event.title }),
+      h('span', { class: 'cnode-order', text: `#${String(seq).padStart(2, '0')}` }),
+      h('span', { class: 'cnode-state', text: STATUS_LABEL[event.status] ?? event.status }),
     ),
+    h('h4', { class: 'cnode-title', text: event.title }),
     h(
       'div',
       { class: 'cnode-sub' },
-      h('span', { text: STATUS_LABEL[event.status] ?? event.status }),
-      layer ? h('span', { text: `· ${layer.name}` }) : null,
-      event.role ? h('span', { text: `· ${event.role}` }) : null,
+      layer ? h('span', { text: layer.name }) : null,
+      event.role ? h('span', { text: ` · ${event.role}` }) : null,
     ),
     (event.skills ?? []).length
       ? h('div', { class: 'cnode-tags' }, (event.skills ?? []).slice(0, 3).map((skill) => h('span', { class: 'tag', text: skill })))
@@ -750,12 +646,12 @@ function canvasNode(workflow, event) {
     h(
       'div',
       { class: 'cnode-foot' },
-      h('span', { class: 'cnode-progress', text: tasks.length ? `待办 ${done}/${tasks.length}` : '未拆待办' }),
-      event.dependsOn.length ? h('span', { class: 'cnode-dep', text: `↳ ${event.dependsOn.length}` }) : null,
+      h('span', { class: 'cnode-progress', text: tasks.length ? `${done}/${tasks.length} 待办` : '未拆待办' }),
+      event.dependsOn.length ? h('span', { class: 'cnode-dep', text: `依赖 ${event.dependsOn.length}` }) : null,
       h('button', {
         type: 'button',
         class: `cnode-open${event.childId ? ' is-child' : ''}`,
-        text: event.childId ? '进入子矩阵' : '⊞ 展开',
+        text: event.childId ? '进入' : '展开',
         onclick: (clickEvent) => {
           clickEvent.stopPropagation()
           onNodeAction(event)
@@ -791,7 +687,31 @@ function renderCanvas() {
   }
   applyCanvasTransform()
   drawEdges()
-  for (const event of events) nodes.append(canvasNode(workflow, event))
+  const sequence = flowOrder(workflow)
+  for (const event of events) nodes.append(canvasNode(workflow, event, sequence.get(event.id) ?? 0))
+}
+
+/** 全局流程序号：先按依赖深度，再按泳道，再按泳道内顺序。 */
+function flowOrder(workflow) {
+  const byId = new Map(workflow.events.map((event) => [event.id, event]))
+  const layerIndex = new Map(workflow.layers.map((layer, index) => [layer.id, index]))
+  const depthCache = new Map()
+  const depthOf = (id, seen = new Set()) => {
+    if (depthCache.has(id)) return depthCache.get(id)
+    if (seen.has(id)) return 0
+    seen.add(id)
+    const deps = (byId.get(id)?.dependsOn ?? []).filter((dep) => byId.has(dep))
+    const value = deps.length ? 1 + Math.max(...deps.map((dep) => depthOf(dep, seen))) : 0
+    depthCache.set(id, value)
+    return value
+  }
+  const ranked = workflow.events.slice().sort((left, right) => {
+    const depthDiff = depthOf(left.id) - depthOf(right.id)
+    if (depthDiff !== 0) return depthDiff
+    const laneDiff = (layerIndex.get(left.layerId) ?? 0) - (layerIndex.get(right.layerId) ?? 0)
+    return laneDiff !== 0 ? laneDiff : left.order - right.order
+  })
+  return new Map(ranked.map((event, index) => [event.id, index + 1]))
 }
 
 function onNodeAction(event) {
@@ -888,11 +808,32 @@ function fitCanvas() {
   applyCanvasTransform()
 }
 
-/** Predictable starting view: the canvas opens at a readable zoom, not a computed guess. */
+/** Opens centred on the matrix: full size when it fits, scaled down when it does not. */
 function resetCanvasView() {
-  state.canvas.zoom = 0.9
-  state.canvas.panX = 24
-  state.canvas.panY = 16
+  const workflow = currentWorkflow()
+  const viewport = $('#canvas-viewport')
+  if (!workflow || !viewport || !workflow.events.length) {
+    state.canvas.zoom = 1
+    state.canvas.panX = 24
+    state.canvas.panY = 16
+    applyCanvasTransform()
+    return
+  }
+  const rect = viewport.getBoundingClientRect()
+  if (rect.width < 80 || rect.height < 80) return
+  const xs = workflow.events.map((event) => posOf(event).x)
+  const ys = workflow.events.map((event) => posOf(event).y)
+  const minX = Math.min(...xs)
+  const minY = Math.min(...ys)
+  const maxX = Math.max(...xs.map((x) => x + NODE_W))
+  const maxY = Math.max(...ys.map((y) => y + NODE_H))
+  const spanX = Math.max(1, maxX - minX)
+  const spanY = Math.max(1, maxY - minY)
+  const pad = 40
+  const zoom = Math.max(0.5, Math.min(1, (rect.width - pad * 2) / spanX, (rect.height - pad * 2) / spanY))
+  state.canvas.zoom = zoom
+  state.canvas.panX = (rect.width - spanX * zoom) / 2 - minX * zoom
+  state.canvas.panY = (rect.height - spanY * zoom) / 2 - minY * zoom
   applyCanvasTransform()
 }
 
@@ -999,6 +940,32 @@ function selectedEvent() {
   return workflow.events.find((event) => event.id === state.selectedEventId) ?? null
 }
 
+const LINK_LABEL = { flow: '顺序', data: '数据', gate: '验收' }
+
+/** 三种连线：实线=顺序、蓝虚线=数据交接、琥珀点线=验收闸口 */
+function linkKindControl(event, depId) {
+  const current = event.links?.[depId] ?? 'flow'
+  return h(
+    'span',
+    { class: 'link-kind' },
+    ...Object.entries(LINK_LABEL).map(([kind, label]) =>
+      h('button', {
+        type: 'button',
+        class: kind === current ? 'is-on' : '',
+        text: label,
+        title: `${label}连线`,
+        onclick: (click) => {
+          click.stopPropagation()
+          const links = { ...(event.links ?? {}) }
+          if (kind === 'flow') delete links[depId]
+          else links[depId] = kind
+          patchEvent({ links }, `已改为${label}连线`)
+        },
+      }),
+    ),
+  )
+}
+
 function renderInspector() {
   const panel = $('#inspector')
   const event = selectedEvent()
@@ -1058,7 +1025,7 @@ function renderInspector() {
         onchange: (change) => toggleTask(event.id, task.id, change.currentTarget.checked),
       }),
       h('span', {
-        class: 'task-text',
+        class: 'task-label',
         text: task.text,
         title: '点击编辑文字',
         onclick: () => editTaskText(event.id, task),
@@ -1089,19 +1056,21 @@ function renderInspector() {
   const depSection = h(
     'div',
     { class: 'ins-section' },
-    h('h4', { text: '依赖 · 先完成这些才解锁' }),
+    h('h4', { text: '连线 · 先完成这些才解锁' }),
     deps.length
       ? h(
           'div',
           { class: 'dep-list' },
           ...deps.map((dep) =>
             h(
-              'span',
+              'div',
               { class: 'dep-chip' },
               h('i', { class: `dot dot-${dep.status}` }),
-              h('span', { text: dep.title }),
+              h('span', { class: 'dep-name', text: dep.title, title: dep.title }),
+              linkKindControl(event, dep.id),
               h('button', {
                 type: 'button',
+                class: 'task-del',
                 text: '✕',
                 title: '移除依赖',
                 onclick: () =>
@@ -1113,7 +1082,7 @@ function renderInspector() {
             ),
           ),
         )
-      : h('p', { class: 'kv', text: '没有依赖，随时可以开始' }),
+      : h('p', { class: 'note', text: '没有上游：这个矩阵可以直接开始。' }),
     otherEvents.length
       ? h(
           'select',
@@ -1198,14 +1167,14 @@ function renderInspector() {
       ? h(
           'div',
           { class: 'child-box' },
-          h('p', { class: 'kv', text: '这一格已经展开成独立子流程，有自己的分工与依赖。' }),
+          h('p', { class: 'note', text: '这一格已经展开成独立子流程，有自己的分工与依赖。' }),
           h('button', { type: 'button', class: 'btn', text: '进入子矩阵 →', onclick: () => selectWorkflow(event.childId) }),
         )
       : h(
           'div',
           { class: 'child-box' },
-          h('p', { class: 'kv', text: '把这一格展开成子流程：里面的分工、依赖、产出单独编排。' }),
-          h('button', { type: 'button', class: 'btn', text: '⊞ 展开成子矩阵', onclick: () => onNodeAction(event) }),
+          h('p', { class: 'note', text: '把这一格拆成子流程：里面的分工、依赖、产出单独编排。' }),
+          h('button', { type: 'button', class: 'btn', text: '展开成子矩阵', onclick: () => onNodeAction(event) }),
         ),
   )
 
@@ -1243,21 +1212,22 @@ function renderInspector() {
         'div',
         { class: 'ins-section' },
         h('h4', { text: `待办 ${(event.tasks ?? []).filter((task) => task.done).length}/${(event.tasks ?? []).length}` }),
-        taskRows.length ? h('div', { class: 'task-list' }, ...taskRows) : h('p', { class: 'kv', text: '还没有待办' }),
+        taskRows.length ? h('div', { class: 'task-list' }, ...taskRows) : h('p', { class: 'note', text: '还没有待办' }),
         h('div', { class: 'task-add' }, taskInput),
       ),
-      h('div', { class: 'ins-section' }, h('h4', { text: '验收标准' }), acceptanceArea),
-      h('div', { class: 'ins-section' }, h('h4', { text: '备注' }), notesArea),
+      h('div', { class: 'ins-section' }, h('h4', { text: '验收' }), acceptanceArea),
       h(
         'div',
         { class: 'ins-section' },
-        h('h4', { text: '矩阵配置' }),
-        h('label', { class: 'ins-label', text: '需要的技能（每行一个）' }),
+        h('h4', { text: '执行说明' }),
+        h('label', { class: 'ins-label', text: '需要技能 · 每行一个' }),
         skillsArea,
         h('label', { class: 'ins-label', text: '输出格式' }),
         outputArea,
         h('label', { class: 'ins-label', text: '给执行者的建议' }),
         suggestionArea,
+        h('label', { class: 'ins-label', text: '备注' }),
+        notesArea,
       ),
       childSection,
       h(
@@ -1384,21 +1354,18 @@ function openInspector(eventId) {
   state.selectedEventId = state.selectedEventId === eventId ? null : eventId
   renderInspector()
   renderBoard()
-  renderGraph()
 }
 
 function closeInspector() {
   state.selectedEventId = null
   renderInspector()
   renderBoard()
-  renderGraph()
 }
 
 function focusEvent(eventId) {
   state.selectedEventId = eventId
   renderInspector()
   renderBoard()
-  renderGraph()
   const card = $(`.ev-card[data-id="${eventId}"]`)
   card?.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' })
 }
@@ -1755,12 +1722,10 @@ function renderAll() {
   renderHead()
   renderNext()
   renderBoard()
-  renderGraph()
   renderCanvas()
   renderInspector()
   $('#board').hidden = state.mode !== 'board' || !currentWorkflow()
   $('#canvas-view').hidden = state.mode !== 'canvas' || !currentWorkflow()
-  $('#graph').hidden = state.mode !== 'graph' || !currentWorkflow()
   $('#next-strip').hidden = !currentWorkflow()
   $('#empty').hidden = Boolean(currentWorkflow()) || state.list.length > 0
 }
@@ -1773,11 +1738,9 @@ function setMode(mode) {
     button.setAttribute('aria-selected', on ? 'true' : 'false')
   })
   renderBoard()
-  renderGraph()
   renderCanvas()
   $('#board').hidden = mode !== 'board' || !currentWorkflow()
   $('#canvas-view').hidden = mode !== 'canvas' || !currentWorkflow()
-  $('#graph').hidden = mode !== 'graph' || !currentWorkflow()
   if (mode === 'canvas') setTimeout(resetCanvasView, 20)
 }
 

@@ -1,7 +1,7 @@
 {
   "name": "dsh-workflow-studio",
-  "version": "0.3.0",
-  "description": "流程工坊 · Workflow Studio — a free-form canvas of matrices for DSH: drag events into a pipeline, nest sub-matrices, give each one tasks, skills and output format, and drive it from both the agent and the page.",
+  "version": "0.4.0",
+  "description": "流程工坊 · Workflow Studio — a paper-white, geometric canvas of matrices for DSH: drag events into a pipeline, draw three kinds of links (flow / data / gate), nest sub-matrices, and drive the whole thing from both the agent and the page.",
   "type": "module",
   "repository": {
     "type": "git",

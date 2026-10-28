@@ -82,6 +82,11 @@ async function evaluate(expression) {
   return result.result?.value
 }
 
+async function quiet() {
+  await evaluate(`document.querySelector('#toast')?.classList.remove('is-on'); true`)
+  await sleep(140)
+}
+
 function wireEvents() {
   socket.addEventListener('message', (message) => {
     const payload = JSON.parse(message.data)
@@ -158,7 +163,35 @@ try {
   let afterToggle = null
   let canvas = null
 
-  if (flow === 'config') {
+  if (flow === 'dialog') {
+    await evaluate(`document.querySelector('#btn-new-workflow')?.click(); true`)
+    await sleep(500)
+    await fs.mkdir(path.dirname(path.resolve(outPath)), { recursive: true })
+    await quiet()
+    const dialogShot = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false })
+    await fs.writeFile(outPath, Buffer.from(dialogShot.data, 'base64'))
+    canvas = await evaluate(`(() => ({
+      open: document.querySelector('#dialog-workflow')?.open ?? false,
+      templates: document.querySelectorAll('.template-card').length,
+      fields: [...document.querySelectorAll('#form-workflow .field > span')].map((node) => node.textContent?.trim()),
+      dialogShot: ${JSON.stringify(path.resolve(outPath))},
+    }))()`)
+  } else if (flow === 'board') {
+    await evaluate(`document.querySelector('[data-view-btn="board"]')?.click(); true`)
+    await sleep(600)
+    await fs.mkdir(path.dirname(path.resolve(outPath)), { recursive: true })
+    await quiet()
+    const boardShot = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false })
+    await fs.writeFile(outPath, Buffer.from(boardShot.data, 'base64'))
+    canvas = await evaluate(`(() => ({
+      visible: !document.querySelector('#board')?.hidden,
+      lanes: document.querySelectorAll('.lane').length,
+      cards: document.querySelectorAll('.ev-card').length,
+      laneHeights: [...document.querySelectorAll('.lane')].map((lane) => Math.round(lane.getBoundingClientRect().height)),
+      cardOverflow: [...document.querySelectorAll('.ev-card')].some((card) => card.scrollHeight > card.clientHeight + 4),
+      boardShot: ${JSON.stringify(path.resolve(outPath))},
+    }))()`)
+  } else if (flow === 'config') {
     await evaluate(`document.querySelector('#btn-data-dir')?.click(); true`)
     await sleep(450)
     const opened = await evaluate(`(() => ({
@@ -205,6 +238,7 @@ try {
     }))()`)
 
     await fs.mkdir(path.dirname(path.resolve(outPath)), { recursive: true })
+    await quiet()
     const cleanShot = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false })
     await fs.writeFile(outPath, Buffer.from(cleanShot.data, 'base64'))
 
@@ -358,6 +392,7 @@ try {
   }
 
   const shotPath = flow === 'shot' ? outPath.replace(/\.png$/i, '-inspector.png') : outPath
+  await quiet()
   const shot = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false })
   await fs.mkdir(path.dirname(path.resolve(shotPath)), { recursive: true })
   await fs.writeFile(shotPath, Buffer.from(shot.data, 'base64'))
