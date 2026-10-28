@@ -63,7 +63,7 @@ dsh plugin --profile desktop add "git+https://github.com/woem2436/dsh-workflow-s
 改本地代码时用 `file:` 装更顺手（免发布）：
 
 ```bash
-dsh plugin --profile desktop add "file:D:/DSH Workplace/Pugins Invention"
+dsh plugin --profile desktop add "file:D:/DSH Workplace/Pugins Invention/dsh-workflow-studio"
 ```
 
 > 两个坑：
