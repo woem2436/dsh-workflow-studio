@@ -28,6 +28,7 @@ const urlFlag = args.indexOf('--url')
 const url = urlFlag >= 0 ? args[urlFlag + 1] : null
 const outFlag = args.indexOf('--out')
 const outPath = outFlag >= 0 ? args[outFlag + 1] : '.scratch/dsh-app.png'
+const seed = args.includes('--seed')
 if (!url) {
   console.error('缺少 --url（用 dsh web 打印的带 token 的地址）')
   process.exit(2)
@@ -118,6 +119,20 @@ try {
   await send('Page.navigate', { url })
   await sleep(4500)
 
+  // 首次启动会有「预览版说明」与「开始使用」两个弹窗，挡住一切点击，先关掉。
+  await evaluate(`(() => {
+    const button = [...document.querySelectorAll('button')].find((element) => element.textContent?.trim() === '继续')
+    if (button) { button.click(); return true }
+    return false
+  })()`)
+  await sleep(600)
+  await evaluate(`(() => {
+    const closer = document.querySelector('[aria-label="关闭"], [aria-label="Close"]')
+    if (closer) { closer.click(); return true }
+    return false
+  })()`)
+  await sleep(400)
+
   const boot = await evaluate(`(() => {
     const body = document.body?.innerText ?? ''
     return {
@@ -168,6 +183,32 @@ try {
     }
   })()`)
 
+  const seeded = seed
+    ? await evaluate(`(async () => {
+        const frame = document.querySelector('iframe[src*="workflow-studio"]')
+        if (!frame) return { ok: false }
+        const win = frame.contentWindow
+        const list = await win.fetch('/workflow-studio/api/workflows').then((response) => response.json())
+        if (list.workflows?.length) return { ok: true, created: false, count: list.workflows.length }
+        const response = await win.fetch('/workflow-studio/api/workflows', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: 'DSH 插件发布 v1', goal: '把流程工坊做成可装可发的插件', template: 'project' }),
+        })
+        const body = await response.json()
+        return { ok: true, created: response.status === 201, status: response.status, id: body.workflow?.id, events: body.workflow?.events?.length }
+      })()`)
+    : null
+  if (seed) {
+    await sleep(800)
+    await evaluate(`(() => {
+      const frame = document.querySelector('iframe[src*="workflow-studio"]')
+      frame?.contentWindow?.location.reload()
+      return true
+    })()`)
+    await sleep(2200)
+  }
+
   const config = await evaluate(`(async () => {
     const frame = document.querySelector('iframe[src*="workflow-studio"]')
     if (!frame) return { ok: false, reason: 'no iframe' }
@@ -206,7 +247,7 @@ try {
   await fs.mkdir(path.dirname(path.resolve(outPath)), { recursive: true })
   await fs.writeFile(outPath, Buffer.from(shot.data, 'base64'))
 
-  console.log(JSON.stringify({ boot, clicked, panel, config, badResponses, consoleErrors, screenshot: path.resolve(outPath) }, null, 2))
+  console.log(JSON.stringify({ boot, clicked, panel, seeded, config, badResponses, consoleErrors, screenshot: path.resolve(outPath) }, null, 2))
 } finally {
   try {
     socket?.close()

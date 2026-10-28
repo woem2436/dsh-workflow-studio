@@ -143,6 +143,7 @@ node dev/harness.js --unlocked --data-dir .dev-data   # 解锁模式，可在页
 node dev/dom-check.js <url> --out shot.png # 无头 Chrome 跑一遍页面并截图（含交互断言）
 node dev/dom-check.js <url> --flow config --target D:/tmp/x   # 走一遍「换数据目录」
 node dev/dsh-app-check.js --url "<dsh web 打印的带 token 地址>"   # 在真实 DSH 实例里验证侧栏与面板
+node dev/dsh-app-check.js --url "<…>" --seed                     # 顺手造一张演示看板再截图
 node --test tests/store.test.js tests/api.test.js tests/config.test.js   # 37 个用例
 ```
 
