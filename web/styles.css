@@ -361,7 +361,9 @@ code,
   margin-top: 4px;
   font-size: 10px;
   color: var(--ink-soft);
-  word-break: break-all;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   line-height: 1.4;
 }
 
@@ -1578,15 +1580,14 @@ input[type='checkbox']:checked::after {
   font-size: 10px;
   color: var(--ink-faint);
   letter-spacing: 0.04em;
+  overflow: hidden;
+  white-space: nowrap;
 }
 
 .status-counts {
   color: var(--ink-soft);
 }
 
-.status-hint {
-  margin-left: auto;
-}
 
 /* ── 弹窗 ───────────────────────────────────────────── */
 

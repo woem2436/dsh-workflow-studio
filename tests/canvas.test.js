@@ -267,6 +267,63 @@ describe('link kinds', () => {
   })
 })
 
+describe('src template', () => {
+  let temp
+  let store
+
+  before(async () => {
+    temp = await tempDir('workflow-src-')
+    store = new WorkflowStore({ dir: temp.dir })
+    await store.ready()
+  })
+
+  after(async () => {
+    await temp.cleanup()
+  })
+
+  it('ships the eight-stage reconnaissance pipeline', async () => {
+    const created = await store.create({ name: 'SRC 挖洞', template: 'src' })
+    assert.equal(created.events.length, 8)
+    assert.equal(created.events[0].status, 'ready')
+    assert.deepEqual(
+      created.events.map((event) => event.layerId),
+      ['direct', 'product', 'design', 'build', 'verify', 'deliver', 'deliver', 'deliver'],
+    )
+    assert.equal(created.signature.inputs[0].name, '目标项目')
+    assert.equal(created.signature.outputs[0].type, 'file')
+    for (const event of created.events) {
+      assert.ok(event.tasks.length >= 3, `${event.title} should carry a checklist`)
+      assert.ok(event.skills.length >= 1, `${event.title} should name skills`)
+      assert.ok(event.outputFormat.length > 0, `${event.title} should define its deliverable`)
+    }
+  })
+
+  it('wires the gate and data handoffs on the template', async () => {
+    const [first] = store.list()
+    const workflow = await store.get(first.id)
+    const evidence = workflow.events.find((event) => event.title === '证据固化与危害定级')
+    const report = workflow.events.find((event) => event.title === '报告汇总')
+    const verifyStage = workflow.events.find((event) => event.title === '逐条最小验证')
+    assert.deepEqual(evidence.links, { [verifyStage.id]: 'gate' })
+    assert.deepEqual(report.links, { [evidence.id]: 'data' })
+  })
+
+  it('names the src tools in each checklist', async () => {
+    const [first] = store.list()
+    const workflow = await store.get(first.id)
+    const mentioned = new Set()
+    for (const event of workflow.events) {
+      for (const task of event.tasks) {
+        for (const match of task.text.matchAll(/src_[a-z]+/g)) mentioned.add(match[0])
+      }
+      for (const skill of event.skills) if (skill.startsWith('src_')) mentioned.add(skill)
+    }
+    for (const tool of ['src_projects', 'src_sync', 'src_progress', 'src_next', 'src_show', 'src_record', 'src_report']) {
+      assert.ok(mentioned.has(tool), `checklist should mention ${tool}`)
+    }
+  })
+})
+
 async function exists(file) {
   try {
     await fs.stat(file)

@@ -143,6 +143,40 @@ workflow(action="create", name="周报流水线",
 ...
 ```
 
+## 模板
+
+新建流程时可以直接拿一份骨架：页面上「新建流程」有三张模板卡，agent 侧是 `create` 的 `template` 参数。
+
+| 模板 | 事件数 | 用途 |
+| --- | --- | --- |
+| `blank` | 0 | 空看板，适合从零拆解 |
+| `project` | 8 | 目标 → 拆解 → 设计 → 实现 → 验证 → 发布，泛用发布流水线 |
+| `src` | 8 | SRC 挖洞：立项授权 → 资产盘点 → 指纹定级 → 逐条验证 → 证据固化 → 报告 → 提交 → 增量巡检 |
+
+### `src`：一条可以一直用下去的挖洞流水线
+
+![SRC 模板](docs/preview-src.png)
+
+每个事件都带好了清单、技能、产出格式和建议，清单里写的就是该调哪个 `src_*` 工具：
+
+```text
+workflow(action="create", name="<目标项目> · 挖洞", template="src")
+workflow(action="next")          # 永远只看「现在能做什么」
+```
+
+八个事件对应的动作：
+
+1. **立项与授权边界**（决策编排）— 项目、范围、禁止项、提交格式；写进流程的输入签名。
+2. **资产盘点与候选清单**（产品定义）— `src_projects` → `src_sync` → `src_progress`，只读本地库，不碰目标。
+3. **指纹确认与验证排序**（方案设计）— `src_next` + `src_show`，把「评分高」翻成「先测哪条」。
+4. **逐条最小验证**（工程实现）— 最小必要请求，`src_record` 写 confirmed / false_positive / blocked。
+5. **证据固化与危害定级**（质量验证）— 动手复现包，定级宁低勿高；与上一环节之间是**验收闸口**（gate）连线。
+6. **报告汇总**（交付发布）— `src_report` 导出，补明细与修复建议；与上一环节之间是**数据交接**（data）连线。
+7. **平台提交与状态跟踪** — 一条一单，记受理号，被驳回先补证据。
+8. **增量巡检与经验沉淀** — 定期重跑 `src_sync`，把易误报的指纹写回模板，让下一次更快。
+
+可持续的部分在第 8 步：流程的产物（候选清单、结论、报告、台账）都是下一次能直接复用的输入；挖洞经验不留在脑子里，写回模板的建议字段。
+
 ## HTTP 接口
 
 页面就是这套接口的客户端，你也可以拿它做自动化：
@@ -185,7 +219,7 @@ node dev/dom-check.js <url> --flow dialog --out shot.png   # 新建流程弹窗
 node dev/dom-check.js <url> --flow config --target D:/tmp/x   # 走一遍「换数据目录」
 node dev/dsh-app-check.js --url "<dsh web 打印的带 token 地址>"   # 在真实 DSH 实例里验证侧栏与面板
 node dev/dsh-app-check.js --url "<…>" --seed                     # 顺手造一张演示看板再截图
-node --test tests/store.test.js tests/api.test.js tests/config.test.js tests/canvas.test.js   # 52 个用例
+node --test tests/store.test.js tests/api.test.js tests/config.test.js tests/canvas.test.js   # 55 个用例
 ```
 
 - 页面是**原生 ESM，零依赖零构建**：`web/index.html` + `web/styles.css` + `web/app.js`。
